@@ -1,0 +1,13 @@
+# Private project docs (planning, status, credentials). Never commit.
+docs/
+CLAUDE.md
+
+# macOS
+.DS_Store
+
+# Media: episodes never go in git
+*.avi
+*.mp4
+*.mkv
+*.wav
+

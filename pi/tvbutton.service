@@ -1,0 +1,12 @@
+[Unit]
+Description=Simpsons TV power knob
+After=multi-user.target
+
+[Service]
+WorkingDirectory=/home/jason/simpsonstv
+ExecStart=/usr/bin/python3 /home/jason/simpsonstv/buttons.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

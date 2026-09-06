@@ -1,0 +1,15 @@
+[Unit]
+Description=Simpsons TV video player
+After=sound.target
+Wants=sound.target
+
+[Service]
+# VLC refuses to run as root; the user is in the video, render and audio groups.
+User=jason
+WorkingDirectory=/home/jason/simpsonstv
+ExecStart=/usr/bin/python3 /home/jason/simpsonstv/player.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
