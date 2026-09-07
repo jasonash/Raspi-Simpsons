@@ -19,7 +19,7 @@ BOOT=/boot/firmware
 echo "==> 1. Packages (VLC with the Raspberry Pi DRM output, no desktop bits)"
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-    vlc-bin vlc-plugin-base vlc-plugin-video-output python3-rpi-lgpio git
+    vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio git
 
 echo "==> 2. Waveshare KMS panel overlay"
 install -m 644 "$HERE/overlays/vc4-kms-dpi-2inch8.dtbo" "$BOOT/overlays/"
@@ -78,6 +78,12 @@ for svc in tvplayer tvbutton; do
 done
 systemctl daemon-reload
 systemctl enable tvplayer.service tvbutton.service
+
+echo "==> 8. No login prompt on the panel"
+# The kernel console is already on tty3 (step 4). tty1 is what the panel shows whenever
+# VLC is not holding the display (boot, service restart, crash). Without a getty it is
+# plain black. Log in over SSH instead.
+systemctl disable --now getty@tty1.service 2>/dev/null || true
 
 echo
 echo "Done. Copy encoded episodes into $TV_DIR/videos and reboot:  sudo reboot"

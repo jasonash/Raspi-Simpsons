@@ -40,7 +40,7 @@ can also be done by hand.
 
 ## What `setup.sh` does
 
-1. **Packages**: `vlc-bin vlc-plugin-base vlc-plugin-video-output python3-rpi-lgpio git`
+1. **Packages**: `vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio git`
    (with `--no-install-recommends`; the full `vlc` metapackage drags in Qt and X11).
 2. **Overlay**: copies `pi/overlays/vc4-kms-dpi-2inch8.dtbo` (from Waveshare's
    [28DPI-DTBO.zip](https://files.waveshare.com/wiki/2.8inc-DPI-LCD/28DPI-DTBO.zip)) into
@@ -66,14 +66,24 @@ can also be done by hand.
    unit) because VLC refuses to start as root; the user must be in the `video`, `render` and
    `audio` groups, which the Imager-created user is. Two `XDG_RUNTIME_DIR` warnings in its log
    are VLC probing for a desktop sound server and can be ignored.
+8. **No login prompt**: `systemctl disable --now getty@tty1`. tty1 is what the panel shows
+   whenever VLC is not holding the display (boot, service restart), and without a getty it is
+   plain black. Log in over SSH; there is no keyboard on this build anyway.
 
 ## How playback works
 
-`player.py` shuffles every `.mp4` in `~/simpsonstv/videos/` and hands the whole batch to one
-`cvlc` process with `--vout drm_vout --codec v4l2m2m,avcodec`, so there is no gap between
-episodes. Measured on the Zero W: about 30 percent CPU for a 480x640 24 fps H.264 clip, with
+`player.py` shuffles every `.mp4` in `~/simpsonstv/videos/` into one libvlc media list player
+(`python3-vlc`) with `--vout=drm_vout --codec=v4l2m2m,avcodec`, in loop mode, and keeps that
+single VLC instance alive for the life of the service. VLC opens the DRM output once and
+reuses it across episodes (confirmed in the verbose log: one `OpenDrmVout`, no close), so the
+console never shows through between items. An earlier version spawned a fresh `cvlc` per
+batch and the tty1 login prompt flashed on the panel every time a batch ended. New files
+copied into `videos/` are appended to the playlist within 30 s. Every 10 minutes the journal
+gets a line with displayed and lost frame counts.
+
+Measured on the Zero W: about 30 to 38 percent CPU for a 480x640 24 fps H.264 episode, with
 VLC's log confirming `h264_v4l2m2m` on `/dev/video10` and `drm_vout` taking YU12 buffers
-directly (zero copy).
+directly (zero copy), and zero lost frames over a 75 s instrumented run.
 
 `buttons.py` polls the switch on GPIO 26 (pulled up). On: GPIO 18 high (backlight) and GPIO 19
 to ALT5 (PWM audio). Off: GPIO 18 low and GPIO 19 to input (mute). Video keeps running behind
