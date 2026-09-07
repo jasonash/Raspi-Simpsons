@@ -49,10 +49,10 @@ can also be done by hand.
    free for backlight, audio and the switch.
 3. **`/boot/firmware/config.txt`**, `[all]` section (legacy lines removed):
 
-       dtoverlay=vc4-kms-dpi-2inch8,rotate=270
+       dtoverlay=vc4-kms-dpi-2inch8,rotate=90
        dtoverlay=audremap,enable_jack,pins_18_19
 
-   `rotate=270` matches a panel whose native top edge is on the viewer's left. It only affects
+   `rotate=90` matches a panel whose native top edge is on the viewer's right. It only affects
    the text console; video is pre-rotated at encode time. `enable_jack` is what makes the
    `bcm2835 Headphones` ALSA card appear on a Zero, which has no jack.
 4. **`/boot/firmware/cmdline.txt`**: `console=tty1` becomes `console=tty3`, plus
@@ -83,10 +83,12 @@ a dark screen, same as the original design. Flip `INVERT_SWITCH` if the knob is 
 
     python3 pi/encode.py /path/to/episodes
 
-Produces `encoded/*.mp4`: 640x480 letterboxed, rotated 90 degrees clockwise to 480x640
-(`transpose=1`), H.264 Baseline yuv420p 24 fps, mono AAC. The Zero W cannot rotate at playback
-time without dropping frames, so the rotation is baked in. If picture comes out upside down,
-change `transpose=1` to `transpose=2` in `encode.py`. Copy with:
+Produces `encoded/*.mp4`: scaled to fill 640x480 and cropped (a 16:9 episode loses about
+12 percent off each side, a 4:3 episode loses nothing), rotated 90 degrees counter-clockwise
+to 480x640 (`transpose=2`), H.264 Baseline yuv420p 24 fps, mono AAC. The Zero W cannot rotate
+at playback time without dropping frames, so the rotation is baked in. If picture comes out
+upside down, change `transpose=2` to `transpose=1` in `encode.py` and `rotate=90` to
+`rotate=270` in `setup.sh`. Copy with:
 
     scp encoded/*.mp4 USER@HOST:~/simpsonstv/videos/
 

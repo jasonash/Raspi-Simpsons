@@ -39,8 +39,8 @@ lines = [l for l in s.splitlines() if not drop.match(l.strip())]
 s = "\n".join(lines).rstrip("\n") + "\n"
 block = """
 # --- Simpsons TV: Waveshare 2.8in DPI LCD (480x640 native) under KMS ---
-# Panel top edge sits on the viewer left, so rotate 270 for the console.
-dtoverlay=vc4-kms-dpi-2inch8,rotate=270
+# Panel top edge sits on the viewer right, so rotate 90 for the console.
+dtoverlay=vc4-kms-dpi-2inch8,rotate=90
 # PWM audio on GPIO 19 (GPIO 18 is the backlight, driven as plain GPIO by buttons.py)
 dtoverlay=audremap,enable_jack,pins_18_19
 """

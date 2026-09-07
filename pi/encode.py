@@ -5,8 +5,10 @@ Usage:  python3 encode.py /path/to/folder/of/episodes
 Output: an 'encoded' subfolder of .mp4 files ready to copy to the Pi.
 
 What it does, and why:
-  * Scales to 640x480 (the 4:3 panel) with letterboxing if needed.
-  * Rotates 90 degrees clockwise so the file is 480x640, the panel's native
+  * Scales to fill 640x480 (the 4:3 panel) and crops the excess. A 16:9
+    episode loses about 12 percent off each side; 4:3 episodes lose nothing.
+    On a 2.8 inch screen a full picture beats black bars.
+  * Rotates 90 degrees counter-clockwise so the file is 480x640, the panel's native
     portrait orientation. The Pi Zero W cannot rotate video at playback time
     without dropping frames, so we bake the rotation into the file.
   * H.264 Baseline, yuv420p, 24 fps: what the Pi Zero's hardware decoder likes.
@@ -20,9 +22,10 @@ import sys
 
 EXTS = ('.mp4', '.mkv', '.mov', '.avi', '.m4v')
 
-# transpose=1 is 90 degrees clockwise. If video appears upside down on the TV,
-# change it to transpose=2 (90 degrees counter-clockwise).
-VF = 'scale=640:480:force_original_aspect_ratio=decrease,pad=640:480:(ow-iw)/2:(oh-ih)/2,fps=24,transpose=1'
+# transpose=2 is 90 degrees counter-clockwise, which matches the panel as mounted
+# in the enclosure (native top edge on the viewer's right). If video appears
+# upside down on the TV, change it to transpose=1 (90 degrees clockwise).
+VF = 'scale=640:480:force_original_aspect_ratio=increase,crop=640:480,fps=24,transpose=2'
 
 
 def main():
