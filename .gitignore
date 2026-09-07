@@ -11,3 +11,4 @@ CLAUDE.md
 *.mkv
 *.wav
 
+__pycache__/
