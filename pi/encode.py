@@ -4,6 +4,22 @@
 Usage:  python3 encode.py /path/to/folder/of/episodes
 Output: an 'encoded' subfolder of .mp4 files ready to copy to the Pi.
 
+        python3 encode.py --fuzzy /path/to/folder/of/episodes
+Output: the same, plus encoded/fuzzy/<same name>.mp4 for every episode: the
+        "vintage" look (soft picture, colour fringing, grain, vignette,
+        scanlines) that the TV's menu switches to under LOOK. Both files come
+        out of ONE pass over the source (decoded once, encoded twice), which is
+        what makes a 790-episode batch bearable. Copy the whole encoded/ folder
+        into videos/ on the drive; the player finds videos/fuzzy/<name>.mp4 by
+        itself. Files are written as .part and renamed when complete, and
+        finished outputs are skipped on the next run, so a batch can be
+        stopped and resumed over as many days as it takes. Running --fuzzy
+        over a folder that already has clean encodes only adds the fuzzy set.
+
+        python3 encode.py --sample 20 [--fuzzy] /path/to/folder
+Output: encoded/sample/: 20 s of each episode starting a minute in, for
+        checking the look before committing to a long batch.
+
         python3 encode.py --static [N]
 Output: static/static.mp4 (one second of TV snow with hiss) and static/ch1.mp4 ..
         chN.mp4, the same with a green channel number in the corner, next to this
@@ -35,7 +51,9 @@ EXTS = ('.mp4', '.mkv', '.mov', '.avi', '.m4v')
 # transpose=2 is 90 degrees counter-clockwise, which matches the panel as mounted
 # in the enclosure (native top edge on the viewer's right). If video appears
 # upside down on the TV, change it to transpose=1 (90 degrees clockwise).
-VF = 'scale=640:480:force_original_aspect_ratio=increase,crop=640:480,fps=24,transpose=2'
+FIT = 'scale=640:480:force_original_aspect_ratio=increase,crop=640:480,fps=24'
+ROTATE = 'transpose=2'
+VF = FIT + ',' + ROTATE
 
 ENCODE = [
     '-c:v', 'libx264', '-profile:v', 'baseline', '-level', '3.0',
@@ -43,6 +61,23 @@ ENCODE = [
     '-c:a', 'aac', '-ac', '1', '-b:a', '96k',
     '-movflags', '+faststart',
 ]
+CRF_CLEAN = '23'
+CRF_FUZZY = '24'         # grain costs bits; a notch softer keeps the files near the clean size
+
+# The vintage look, applied to the landscape 640x480 frame before the rotation, in the
+# order a real signal picked it up: a soft picture (poor bandwidth), colour fringing
+# (chroma out of step with luma), grain (weak reception), then the tube itself: a
+# vignette and scanlines (a translucent stripe every SCANLINE_PERIOD rows).
+FUZZY = ','.join([
+    'gblur=sigma=0.9',
+    'chromashift=cbh=2:crh=-2',
+    'eq=saturation=0.9:contrast=0.94',
+    'noise=c0s=20:c0f=t+u',
+    'vignette=angle=PI/6',
+])
+SCANLINE_PERIOD = 3
+SCANLINE_ALPHA = 90      # 0-255, how dark the stripe is
+SCANLINES_PNG = '.scanlines.png'
 
 STATIC_SECONDS = 1.0
 STATIC_GRAIN = '320x240'     # noise is generated at this size and doubled: chunkier snow, smaller file
@@ -86,7 +121,7 @@ def make_static(count, dst):
             # Drawn on the landscape frame, before the rotation, so it ends up the right
             # way round on the panel like the episodes do.
             vf += number_boxes(label)
-        vf.append('transpose=2')
+        vf.append(ROTATE)
         subprocess.run([
             'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
             '-f', 'lavfi', '-i', 'nullsrc=s=%s:r=24:d=%s' % (STATIC_GRAIN, STATIC_SECONDS),
@@ -96,32 +131,113 @@ def make_static(count, dst):
         ], check=True)
 
 
+def make_scanlines(path):
+    """A transparent 640x480 PNG with a dark stripe every SCANLINE_PERIOD rows."""
+    if os.path.isfile(path):
+        return
+    subprocess.run([
+        'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
+        '-f', 'lavfi', '-i', 'color=c=black:s=640x480:r=1,format=rgba',
+        '-vf', "geq=r=0:g=0:b=0:a='if(eq(mod(Y,%d),%d),%d,0)'" % (
+            SCANLINE_PERIOD, SCANLINE_PERIOD - 1, SCANLINE_ALPHA),
+        '-frames:v', '1', path,
+    ], check=True)
+
+
+def encode(src, clean, fuzzy, scanlines, sample=None):
+    """One ffmpeg run writing whichever of `clean` and `fuzzy` is not None."""
+    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-stats', '-y']
+    if sample:
+        cmd += ['-ss', '60', '-t', str(sample)]
+    cmd += ['-i', src]
+    outputs = []
+    if clean and fuzzy:
+        cmd += ['-loop', '1', '-i', scanlines]
+        graph = ('[0:v]%s,split=2[c][f];[c]%s[clean];'
+                 '[f]%s[f1];[f1][1:v]overlay=shortest=1,format=yuv420p,%s[fuzzy]'
+                 % (FIT, ROTATE, FUZZY, ROTATE))
+        outputs = [('[clean]', CRF_CLEAN, clean), ('[fuzzy]', CRF_FUZZY, fuzzy)]
+    elif fuzzy:
+        cmd += ['-loop', '1', '-i', scanlines]
+        graph = ('[0:v]%s,%s[f1];[f1][1:v]overlay=shortest=1,format=yuv420p,%s[fuzzy]'
+                 % (FIT, FUZZY, ROTATE))
+        outputs = [('[fuzzy]', CRF_FUZZY, fuzzy)]
+    else:
+        graph = '[0:v]%s[clean]' % VF
+        outputs = [('[clean]', CRF_CLEAN, clean)]
+    cmd += ['-filter_complex', graph]
+    parts = []
+    for label, crf, out in outputs:
+        part = out + '.part'
+        parts.append((part, out))
+        cmd += ['-map', label, '-map', '0:a:0?', *ENCODE, '-crf', crf, '-f', 'mp4', part]
+    try:
+        result = subprocess.run(cmd)
+    except KeyboardInterrupt:
+        result = None
+    if result is None or result.returncode != 0:
+        for part, _ in parts:
+            if os.path.isfile(part):
+                os.remove(part)
+        if result is None:
+            raise KeyboardInterrupt
+        print('ffmpeg failed on', os.path.basename(src), file=sys.stderr, flush=True)
+        return False
+    for part, out in parts:
+        os.replace(part, out)
+    return True
+
+
 def main():
     here = os.path.dirname(os.path.realpath(__file__))
-    if len(sys.argv) > 1 and sys.argv[1] == '--static':
-        make_static(int(sys.argv[2]) if len(sys.argv) > 2 else 9, os.path.join(here, 'static'))
+    args = sys.argv[1:]
+    if args and args[0] == '--static':
+        make_static(int(args[1]) if len(args) > 1 else 9, os.path.join(here, 'static'))
         return
-    src = sys.argv[1] if len(sys.argv) > 1 else here
+    fuzzy = False
+    sample = None
+    while args and args[0].startswith('--'):
+        flag = args.pop(0)
+        if flag == '--fuzzy':
+            fuzzy = True
+        elif flag == '--sample':
+            sample = int(args.pop(0))
+        else:
+            sys.exit('unknown option ' + flag)
+    src = args[0] if args else here
     dst = os.path.join(src, 'encoded')
-    os.makedirs(dst, exist_ok=True)
+    if sample:
+        dst = os.path.join(dst, 'sample')
+    fuzzy_dir = os.path.join(dst, 'fuzzy')
+    os.makedirs(fuzzy_dir if fuzzy else dst, exist_ok=True)
+    scanlines = os.path.join(fuzzy_dir, SCANLINES_PNG)
+    if fuzzy:
+        make_scanlines(scanlines)
 
     files = sorted(
         os.path.join(dp, f)
         for dp, _, fns in os.walk(src)
         for f in fns
-        if f.lower().endswith(EXTS) and not dp.startswith(dst)
+        if f.lower().endswith(EXTS) and not dp.startswith(os.path.join(src, 'encoded'))
     )
     for path in files:
-        out = os.path.join(dst, os.path.splitext(os.path.basename(path))[0] + '.mp4')
-        if os.path.isfile(out):
+        name = os.path.splitext(os.path.basename(path))[0] + '.mp4'
+        clean = os.path.join(dst, name)
+        want_clean = None if os.path.isfile(clean) else clean
+        want_fuzzy = None
+        if fuzzy:
+            f = os.path.join(fuzzy_dir, name)
+            want_fuzzy = None if os.path.isfile(f) else f
+        if not want_clean and not want_fuzzy:
             continue
-        print('Encoding', os.path.basename(out), flush=True)
-        subprocess.run([
-            'ffmpeg', '-hide_banner', '-loglevel', 'error', '-stats', '-i', path,
-            '-vf', VF, *ENCODE, '-crf', '23',
-            out,
-        ], check=False)
+        print('Encoding %s (%s)' % (name, ' + '.join(
+            w for w, x in (('clean', want_clean), ('fuzzy', want_fuzzy)) if x)), flush=True)
+        encode(path, want_clean, want_fuzzy, scanlines, sample)
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('\nStopped; run again to resume.', file=sys.stderr)
+        sys.exit(130)

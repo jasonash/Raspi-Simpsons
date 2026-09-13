@@ -242,6 +242,33 @@ one-off test clip over WiFi:
 
     scp encoded/*.mp4 USER@HOST:~/simpsonstv/videos/
 
+### The vintage look
+
+    python3 pi/encode.py --fuzzy /path/to/episodes
+
+writes `encoded/fuzzy/<same name>.mp4` next to every clean file: the picture the menu's LOOK
+switch calls VINTAGE. Both files come out of one pass over the source (decoded once, split,
+encoded twice), so a season costs little more than the clean encode alone. The look is
+applied to the landscape frame before the rotation, in the order a real set would have
+picked it up: Gaussian blur (`gblur=sigma=0.9`), chroma out of step with luma
+(`chromashift=cbh=2:crh=-2`), slightly flatter colour (`eq=saturation=0.9:contrast=0.94`),
+temporal luma grain (`noise=c0s=20:c0f=t+u`), a vignette (`vignette=angle=PI/6`), and
+scanlines: a translucent black stripe every third row from a generated PNG
+(`encoded/fuzzy/.scanlines.png`) laid over the frame. Constants at the top of `encode.py`.
+Fuzzy files use CRF 24 against 23 for clean and come out a little smaller: the blur removes
+more detail than the grain adds.
+
+Batches are resumable: outputs are written as `.part` and renamed when ffmpeg finishes, a
+finished output is skipped on the next run, and Ctrl-C removes the partial files. Running
+`--fuzzy` over a folder whose clean encodes already exist only adds the fuzzy set. To judge
+the look before a long batch, `--sample 20` (with or without `--fuzzy`) writes 20 s of each
+episode, from a minute in, to `encoded/sample/`.
+
+Copy the whole `encoded/` folder into `videos/` on the drive so that `videos/fuzzy/` sits
+next to the clean files. The player ignores subfolders when building the library and only
+looks in `fuzzy/` for the twin of the file it is about to play, so a half-copied fuzzy set
+just means some episodes stay clean under VINTAGE.
+
 ## Handy commands on the Pi
 
     pinctrl get 10,11,18,19,26,27             # pin state (10/11/27 are the touch bus)
