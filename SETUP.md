@@ -104,15 +104,51 @@ so a copy in progress is never queued half-written.
 
 ## How playback works
 
-`player.py` shuffles every `.mp4` in `videos/` on the USB drive (and in `~/simpsonstv/videos/`,
-kept for test clips) into one libvlc media list player
-(`python3-vlc`) with `--vout=drm_vout --codec=avcodec --avcodec-codec=h264`, in loop mode, and
-keeps that single VLC instance alive for the life of the service. VLC opens the DRM output once
-and reuses it across episodes (confirmed in the verbose log: one `OpenDrmVout`, no close), so the
-console never shows through between items. An earlier version spawned a fresh `cvlc` per
-batch and the tty1 login prompt flashed on the panel every time a batch ended. New files
-copied into either folder are appended to the playlist within 30 s of settling. Every 10 minutes
+`player.py` treats every `.mp4` in `videos/` on the USB drive (and in `~/simpsonstv/videos/`,
+kept for test clips) as the library and plays it through one libvlc media player
+(`python3-vlc`) with `--vout=drm_vout --codec=avcodec --avcodec-codec=h264`. The same player
+object is reused for every file for the life of the service, so VLC opens the DRM output once
+and keeps it (confirmed in the verbose log: one `OpenDrmVout` across episodes and static clips,
+no close), and the console never shows through between items. An earlier version spawned a
+fresh `cvlc` per batch and the tty1 login prompt flashed on the panel every time a batch ended.
+New files copied into either folder join the channels within 30 s of settling. Every 10 minutes
 the journal gets a line with displayed and lost frame counts.
+
+### Channels
+
+`channels.py` turns the library into virtual channels. Each channel is a fixed shuffled
+playlist (seeded from the channel name, so the order survives reboots) with a clock that
+started at a random point at boot. The channel "is" always somewhere in its schedule; when you
+tune to it the player computes where from the file durations and starts the episode there
+(VLC's `start-time` option, accurate to within a second), so tuning away and back later lands
+further on, like a broadcast. Nothing is decoded for channels nobody is watching. When an
+episode ends the player moves to whatever the clock says is next. Durations come straight
+from each file's MP4 header (`mvhd`), which is instant even for hundreds of files on the
+thumb drive; they match `ffprobe` to within 50 ms on the encoded episodes.
+
+A **tap** goes to the next channel: a second of TV static plays first, then the channel's
+current programme. Taps during the static restart it for the next channel, so you can flip
+through. By default there are three channels, each carrying every episode in a different
+order. `channels.json` at the root of the drive (or in `~/simpsonstv/`) overrides that:
+
+    {"channels": [
+        {"name": "3", "match": ["S01", "S02", "S03"]},
+        {"name": "5", "match": ["S23"]},
+        {"name": "7"}
+    ]}
+
+`match` is a list of case-insensitive substrings of the file name; leave it out for a channel
+that carries everything. The player logs `Channel 5: The Simpsons S23E04.mp4 at 0:12:31` on
+every change.
+
+### Static clips
+
+`python3 pi/encode.py --static 9` on the Mac writes `pi/static/static.mp4` (plain snow with
+hiss, 480x640, 24 fps, one second) and `ch1.mp4` to `ch9.mp4`, the same with a big green
+block-font channel number top right, drawn with ffmpeg's `drawbox` because Homebrew's ffmpeg
+has no `drawtext`. Copy the `static/` folder to the root of the SIMPSONSTV drive (the player
+also looks in `~/simpsonstv/static/`). The clips are not in git: a second of noise is close to
+a megabyte no matter how it is encoded. Without them a channel change is instant, no static.
 
 **Why software decoding.** On the Zero 2 W, VLC's hardware decoder path (`h264_v4l2m2m` via
 the Raspberry Pi avcodec patches, `/dev/video10`) decodes fine but the picture reaches the

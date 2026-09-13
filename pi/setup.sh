@@ -77,7 +77,7 @@ install -m 644 "$HERE/asound.conf" /etc/asound.conf
 
 echo "==> 6. Scripts in $TV_DIR"
 install -d -o "$TV_USER" -g "$TV_USER" "$TV_DIR" "$TV_DIR/videos"
-install -m 755 -o "$TV_USER" -g "$TV_USER" "$HERE/player.py" "$HERE/touch.py" "$HERE/buttons.py" "$HERE/encode.py" "$TV_DIR/"
+install -m 755 -o "$TV_USER" -g "$TV_USER" "$HERE/player.py" "$HERE/channels.py" "$HERE/touch.py" "$HERE/buttons.py" "$HERE/encode.py" "$TV_DIR/"
 # player.py reads the touch panel through /dev/input (group input)
 usermod -aG input "$TV_USER"
 

@@ -57,8 +57,8 @@ def find_device():
 class TouchInput:
     """Background reader. Gestures arrive on .events as TAP or LONG_PRESS strings."""
 
-    def __init__(self, log=print):
-        self.events = queue.Queue()
+    def __init__(self, log=print, events=None):
+        self.events = events if events is not None else queue.Queue()
         self.log = log
         self._thread = threading.Thread(target=self._run, name='touch', daemon=True)
 

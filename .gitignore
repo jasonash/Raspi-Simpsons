@@ -12,3 +12,6 @@ CLAUDE.md
 *.wav
 
 __pycache__/
+
+# Generated static clips (encode.py --static); they live on the USB drive
+pi/static/
