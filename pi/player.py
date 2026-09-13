@@ -7,7 +7,11 @@ next to this script is the library. channels.py splits the library into
 channels, each a fixed shuffled playlist with its own clock running since boot,
 so tuning away and back later lands further on in the schedule like a real
 broadcast. A tap on the screen (touch.py) goes to the next channel through a
-second of TV static; a long press is reserved for the menu.
+second of TV static; a long press opens the menu (menu.py): VLC is stopped,
+which hands the panel to the console framebuffer, the menu is drawn there, and
+VLC takes the panel back when the menu closes. Channel, look (clean or the
+vintage encode from encode.py --fuzzy), volume and a clean shutdown live there;
+look and volume persist in settings.json next to this script.
 
 Everything plays inside ONE long-lived VLC media player driven through libvlc
 (python3-vlc). The process never exits and the player object is reused for
@@ -24,8 +28,10 @@ appended to every channel that wants them without disturbing playback. A
 file is ignored until it has stopped changing for a minute so a copy in
 progress is never queued half-written.
 """
+import json
 import os
 import queue
+import subprocess
 import time
 from urllib.parse import unquote
 
@@ -34,11 +40,20 @@ import vlc
 import channels
 import touch
 
+try:
+    import menu
+except ImportError:      # no python3-pil: the TV still works, a long press just logs
+    menu = None
+
 HERE = os.path.dirname(os.path.realpath(__file__))
 DRIVE = '/mnt/simpsonstv'                        # USB thumb drive (fstab mount, absent is fine)
 VIDEO_DIRS = [os.path.join(DRIVE, 'videos'), os.path.join(HERE, 'videos')]
 STATIC_DIRS = [os.path.join(DRIVE, 'static'), os.path.join(HERE, 'static')]
 CONFIG_PATHS = [os.path.join(DRIVE, 'channels.json'), os.path.join(HERE, 'channels.json')]
+SETTINGS_PATH = os.path.join(HERE, 'settings.json')
+LOOKS = ('clean', 'vintage')
+DEFAULT_SETTINGS = {'volume': 100, 'look': LOOKS[0]}
+VINTAGE_DIR = 'fuzzy'     # videos/fuzzy/<name>.mp4 is the vintage version of videos/<name>.mp4
 
 VLC_ARGS = [
     '--quiet',
@@ -58,6 +73,7 @@ RESCAN_SECONDS = 30      # how often to look for new files
 STATS_SECONDS = 600      # how often to log decoder/display counters
 TAP_HOLDOFF = 0.4        # ignore taps this soon after the last one (double taps, bounces)
 WATCHDOG_SECONDS = 5     # VLC sitting in Ended/Error this long without telling us = restart
+MENU_TIMEOUT = 20        # close the menu after this long without a touch
 
 
 def log(msg):
@@ -67,6 +83,30 @@ def log(msg):
 def hms(seconds):
     seconds = int(seconds)
     return '%d:%02d:%02d' % (seconds // 3600, seconds // 60 % 60, seconds % 60)
+
+
+def load_settings():
+    s = dict(DEFAULT_SETTINGS)
+    try:
+        with open(SETTINGS_PATH) as f:
+            s.update({k: v for k, v in json.load(f).items() if k in s})
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError, AttributeError) as e:
+        log('Bad %s, using defaults: %s' % (SETTINGS_PATH, e))
+    s['volume'] = max(0, min(100, int(s['volume'])))
+    if s['look'] not in LOOKS:
+        s['look'] = LOOKS[0]
+    return s
+
+
+def save_settings(s):
+    try:
+        with open(SETTINGS_PATH + '.tmp', 'w') as f:
+            json.dump(s, f)
+        os.replace(SETTINGS_PATH + '.tmp', SETTINGS_PATH)
+    except OSError as e:
+        log('Cannot save %s: %s' % (SETTINGS_PATH, e))
 
 
 def static_clip(channel_name):
@@ -82,14 +122,17 @@ def static_clip(channel_name):
 class TV:
     """One VLC media player showing whichever channel is selected."""
 
-    STATIC, EPISODE, IDLE = 'static', 'episode', 'idle'
+    STATIC, EPISODE, IDLE, MENU = 'static', 'episode', 'idle', 'menu'
 
-    def __init__(self, instance, chans, events):
+    def __init__(self, instance, chans, events, look='clean'):
         self.instance = instance
         self.channels = chans
         self.events = events             # shared queue: gestures and player events
         self.player = instance.media_player_new()
         self.state = self.IDLE
+        self.look = look                 # 'clean' or 'vintage', see variant()
+        self.volume = None               # 0-100 software gain, see set_volume()
+        self.volume_pending = False
         self.current = 0                 # channel being shown (or last shown)
         self.target = 0                  # channel to show once the static clip ends
         self.playing_index = None        # index into the channel's playlist
@@ -98,9 +141,32 @@ class TV:
         em = self.player.event_manager()
         em.event_attach(vlc.EventType.MediaPlayerEndReached, lambda e: self.events.put('ended'))
         em.event_attach(vlc.EventType.MediaPlayerEncounteredError, lambda e: self.events.put('ended'))
+        em.event_attach(vlc.EventType.MediaPlayerPlaying, lambda e: self.events.put('playing'))
+
+    def variant(self, path):
+        """The file to actually play for `path` given the current look."""
+        if self.look == 'vintage':
+            alt = os.path.join(os.path.dirname(path), VINTAGE_DIR, os.path.basename(path))
+            if os.path.isfile(alt):
+                return alt
+        return path
+
+    def set_volume(self, volume):
+        """Software gain in VLC, 0-100. libvlc can only set it while an audio output
+        exists, which is not the case in the menu (player stopped) or in the first moments
+        of an item, so apply_volume() is retried from the main loop until it takes. Once set
+        the value survives stop and restart (VLC copies it to the media player object)."""
+        self.volume = int(volume)
+        self.volume_pending = True
+        self.apply_volume()
+
+    def apply_volume(self):
+        if self.volume_pending and self.player.audio_set_volume(self.volume) == 0:
+            self.volume_pending = False
+            log('Volume %d' % self.volume)
 
     def _play(self, path, offset=0.0):
-        media = self.instance.media_new_path(path)
+        media = self.instance.media_new_path(self.variant(path))
         if offset > 0:
             media.add_option(':start-time=%.3f' % offset)
         self.player.set_media(media)
@@ -137,7 +203,22 @@ class TV:
     def next_channel(self):
         self.tune(self.target + 1)
 
+    def open_menu(self):
+        """Stop VLC so the panel falls back to the console framebuffer for menu.py."""
+        self.state = self.MENU
+        self.player.stop()
+
+    def close_menu(self, channel):
+        """Back to television: through static if the channel changed, else straight on."""
+        self.state = self.IDLE
+        if channel != self.current:
+            self.tune(channel)
+        else:
+            self.show(self.current)
+
     def on_ended(self):
+        if self.state == self.MENU:
+            return
         if self.state == self.STATIC:
             self.show(self.target)
         elif self.state == self.EPISODE:
@@ -154,7 +235,7 @@ class TV:
 
     def check(self):
         """Watchdog for a lost end-of-item event or a stuck player."""
-        if self.state == self.IDLE:
+        if self.state in (self.IDLE, self.MENU):
             return
         if time.monotonic() - self.started_at < WATCHDOG_SECONDS:
             return
@@ -180,6 +261,17 @@ def load_library(known):
 
 
 def main():
+    settings = load_settings()
+    log('Settings: volume %d, look %s' % (settings['volume'], settings['look']))
+    screen = None
+    if menu is None:
+        log('Menu: python3-pil not installed, long press will do nothing')
+    else:
+        try:
+            screen = menu.Framebuffer()
+        except (OSError, RuntimeError) as e:
+            log('Menu: no usable framebuffer (%s), long press will do nothing' % e)
+
     try:
         config, config_path = channels.load_config(CONFIG_PATHS)
     except ValueError as e:
@@ -202,7 +294,7 @@ def main():
 
     events = queue.Queue()
     instance = vlc.Instance(VLC_ARGS)
-    tv = TV(instance, chans, events)
+    tv = TV(instance, chans, events, look=settings['look'])
 
     def on_media_changed(event):
         media = tv.player.get_media()
@@ -211,7 +303,25 @@ def main():
     tv.player.event_manager().event_attach(vlc.EventType.MediaPlayerMediaChanged, on_media_changed)
 
     touch.TouchInput(log=log, events=events).start()
+    tv.set_volume(settings['volume'])
     tv.show(0)
+
+    ui = None                # the open menu.Menu, or None while watching TV
+    menu_touched = 0.0       # monotonic time of the last touch while the menu was open
+
+    def open_menu():
+        nonlocal ui, menu_touched
+        tv.open_menu()
+        ui = menu.Menu([c.name for c in chans], tv.current, tv.look, settings['volume'])
+        menu_touched = time.monotonic()
+        screen.show(ui.render())
+        log('Menu: open')
+
+    def close_menu(why):
+        nonlocal ui
+        log('Menu: closed (%s)' % why)
+        chosen, ui = ui.channel, None
+        tv.close_menu(chosen)
 
     last_rescan = last_stats = time.monotonic()
     last_tap = 0.0
@@ -225,14 +335,49 @@ def main():
 
         if event == 'ended':
             tv.on_ended()
-        elif event == touch.TAP:
-            if now - last_tap >= TAP_HOLDOFF:
-                last_tap = now
-                log('Tap: next channel')
-                tv.next_channel()
-        elif event == touch.LONG_PRESS:
-            log('Long press: menu (not built yet)')
+        elif isinstance(event, tuple):
+            kind, x, y = event
+            if ui is not None:
+                menu_touched = now
+                if kind == touch.LONG_PRESS:
+                    close_menu('long press')
+                elif kind == touch.TAP:
+                    changed = ui.tap(x, y)
+                    if changed == menu.DONE:
+                        close_menu('done')
+                    elif changed == menu.SHUTDOWN:
+                        log('Menu: shutting down')
+                        screen.show(menu.message('SHUTTING DOWN'))
+                        save_settings(settings)
+                        subprocess.run(['sudo', 'systemctl', 'poweroff'], check=False)
+                    else:
+                        if changed == menu.VOLUME:
+                            settings['volume'] = ui.volume
+                            tv.set_volume(ui.volume)
+                            save_settings(settings)
+                        elif changed == menu.LOOK:
+                            settings['look'] = tv.look = ui.look
+                            save_settings(settings)
+                        if changed == menu.CHANNEL:
+                            log('Menu: channel -> %s' % chans[ui.channel].name)
+                        elif changed:
+                            log('Menu: %s -> %s' % (changed, getattr(ui, changed)))
+                        screen.show(ui.render())
+            elif kind == touch.TAP:
+                if now - last_tap >= TAP_HOLDOFF:
+                    last_tap = now
+                    log('Tap: next channel')
+                    tv.next_channel()
+            elif kind == touch.LONG_PRESS:
+                if screen is None:
+                    log('Long press: no menu available')
+                else:
+                    open_menu()
 
+        if ui is not None and now - menu_touched >= MENU_TIMEOUT:
+            close_menu('timeout')
+
+        tv.apply_volume()
         tv.check()
 
         if now - last_rescan >= RESCAN_SECONDS:

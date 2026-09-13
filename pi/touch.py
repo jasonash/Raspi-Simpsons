@@ -2,11 +2,12 @@
 """Simpsons TV touch input: turns the panel's touch controller into two gestures.
 
   tap        finger down and up again quickly, without moving: "change channel"
+             (or, while the menu is open, "press what is under the finger")
   long press finger held still for a while: "open the menu" (fires while still held)
 
-Anything else (a swipe, a second finger, a very slow tap) is ignored. Only the
-timing of BTN_TOUCH is used, so this works regardless of how the touch axes are
-oriented relative to the mounted panel; only the menu needs real coordinates.
+Anything else (a swipe, a second finger, a very slow tap) is ignored. Gestures
+are decided from the timing of BTN_TOUCH alone, so channel changes work however
+the touch axes are oriented; the position is carried along for the menu.
 
 The controller is a Goodix GT911 on the Waveshare 2.8in DPI LCD, brought up by
 overlays/simpsonstv-touch.dts (bit-banged I2C on GPIO 10/11, interrupt on 27)
@@ -14,13 +15,21 @@ and read here through the kernel's evdev interface (python3-evdev). The reader
 runs in a background thread and hands finished gestures to a queue; the player
 never blocks on touch and keeps working if the panel has no touch at all.
 
+Coordinates. The overlay carries Waveshare's axis flags, so the controller
+reports X 0-639 and Y 0-479: already the landscape frame the viewer sees, with
+the origin top left, IF the controller's own origin sits at the panel's native
+top-left corner. SWAP_XY / FLIP_X / FLIP_Y below correct it if it does not;
+check with `python3 menu.py` (draws the menu and a dot where each tap lands).
+
 Run this file directly to print gestures for tuning the thresholds:
-    python3 touch.py
+    python3 touch.py          # gestures with screen coordinates
+    python3 touch.py --raw    # the controller's own coordinates
 """
 import glob
 import os
 import queue
 import select
+import sys
 import threading
 import time
 
@@ -36,8 +45,28 @@ LONG_PRESS_S = 0.80      # finger still down after this long = long press
 MOVE_PX = 30             # more movement than this (in raw touch units) cancels either
 RETRY_S = 5.0            # how often to look for the device if it is missing
 
+# Raw controller axes -> screen (640x480 landscape as mounted, origin top left).
+# Set after checking with `python3 menu.py`; see the module docstring.
+SWAP_XY = False
+FLIP_X = False
+FLIP_Y = False
+SCREEN_W, SCREEN_H = 640, 480
+
 TAP = 'tap'
 LONG_PRESS = 'long_press'
+
+
+def to_screen(x, y, max_x, max_y):
+    """Map a raw controller position to screen pixels."""
+    if SWAP_XY:
+        x, y, max_x, max_y = y, x, max_y, max_x
+    if FLIP_X:
+        x = max_x - x
+    if FLIP_Y:
+        y = max_y - y
+    sx = round(x * (SCREEN_W - 1) / max_x) if max_x else x
+    sy = round(y * (SCREEN_H - 1) / max_y) if max_y else y
+    return (min(max(sx, 0), SCREEN_W - 1), min(max(sy, 0), SCREEN_H - 1))
 
 
 def find_device():
@@ -55,11 +84,13 @@ def find_device():
 
 
 class TouchInput:
-    """Background reader. Gestures arrive on .events as TAP or LONG_PRESS strings."""
+    """Background reader. Gestures arrive on .events as (TAP or LONG_PRESS, x, y)
+    tuples, x and y in screen pixels (raw controller units with raw=True)."""
 
-    def __init__(self, log=print, events=None):
+    def __init__(self, log=print, events=None, raw=False):
         self.events = events if events is not None else queue.Queue()
         self.log = log
+        self.raw = raw
         self._thread = threading.Thread(target=self._run, name='touch', daemon=True)
 
     def start(self):
@@ -90,7 +121,19 @@ class TouchInput:
                     pass
             time.sleep(RETRY_S)
 
+    def _emit(self, kind, pos, max_x, max_y):
+        if self.raw:
+            self.events.put((kind, pos[0], pos[1]))
+        else:
+            sx, sy = to_screen(pos[0], pos[1], max_x, max_y)
+            self.events.put((kind, sx, sy))
+
     def _read(self, dev):
+        try:
+            max_x = dev.absinfo(evdev.ecodes.ABS_X).max
+            max_y = dev.absinfo(evdev.ecodes.ABS_Y).max
+        except (KeyError, OSError):
+            max_x, max_y = SCREEN_W - 1, SCREEN_H - 1
         touching = False
         down_at = 0.0
         down_pos = [0, 0]
@@ -110,7 +153,7 @@ class TouchInput:
             if not ready:
                 if touching and not moved and not fired_long:
                     fired_long = True
-                    self.events.put(LONG_PRESS)
+                    self._emit(LONG_PRESS, down_pos, max_x, max_y)
                 continue
             try:
                 events = list(dev.read())
@@ -145,10 +188,14 @@ class TouchInput:
                         released = False
                         touching = False
                         if not moved and not fired_long and now - down_at <= TAP_MAX_S:
-                            self.events.put(TAP)
+                            self._emit(TAP, down_pos, max_x, max_y)
+
 
 if __name__ == '__main__':
-    t = TouchInput().start()
-    print('Tap or hold the screen (Ctrl-C to stop)')
+    raw = '--raw' in sys.argv[1:]
+    t = TouchInput(raw=raw).start()
+    print('Tap or hold the screen (Ctrl-C to stop); positions are %s' % (
+        'raw controller units' if raw else 'screen pixels'))
     while True:
-        print(time.strftime('%H:%M:%S'), t.events.get())
+        kind, x, y = t.events.get()
+        print(time.strftime('%H:%M:%S'), kind, x, y)

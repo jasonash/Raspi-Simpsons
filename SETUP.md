@@ -42,7 +42,7 @@ can also be done by hand.
 ## What `setup.sh` does
 
 1. **Packages**: `vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio
-   python3-evdev device-tree-compiler evtest i2c-tools git exfatprogs`
+   python3-evdev python3-pil fonts-dejavu-core device-tree-compiler evtest i2c-tools git exfatprogs`
    (with `--no-install-recommends`; the full `vlc` metapackage drags in Qt and X11).
 2. **Overlay**: copies `pi/overlays/vc4-kms-dpi-2inch8.dtbo` (from Waveshare's
    [28DPI-DTBO.zip](https://files.waveshare.com/wiki/2.8inc-DPI-LCD/28DPI-DTBO.zip)) into
@@ -185,11 +185,43 @@ future menu cares about coordinates).
 `touch.py` reads it with `python3-evdev` in a thread inside the player and turns it into two
 gestures: a **tap** (down and up within 0.4 s, less than 30 units of movement) and a **long
 press** (held still for 0.8 s, fires while the finger is still down). Swipes, slow taps and
-extra fingers do nothing. A tap is "change channel" and a long press is "open the menu".
-Until the channel controller exists, a tap skips to the next episode (taps within 1 s of the
-last change are ignored) and a long press only logs. `python3 touch.py` prints gestures for
-tuning the thresholds; `evtest` shows the raw events. The service user must be in the
-`input` group (the installer does this).
+extra fingers do nothing. A tap is "change channel" (taps within 0.4 s of the last are
+ignored) and a long press is "open the menu". Each gesture carries the finger position in
+screen pixels (640x480 landscape, origin top left). `python3 touch.py` prints gestures for
+tuning the thresholds (`--raw` for the controller's own coordinates); `evtest` shows the raw
+events. The service user must be in the `input` and `video` groups (the installer does this).
+
+### Menu
+
+`menu.py` is the long-press menu. The player stops VLC, which releases the display, and the
+kernel puts the console framebuffer back on the panel (`/dev/fb0`, `vc4drmfb`, 480x640
+RGB565, black because tty1 has no login prompt). The menu is drawn there with Pillow
+(`python3-pil`, DejaVu Sans Bold) as a 640x480 landscape picture rotated 90 degrees
+counter-clockwise on the way in, the same rotation `encode.py` bakes into the episodes.
+Measured on the Zero 2 W: VLC lets go in 0.07 s, the menu draws in 0.14 s, and VLC is
+playing again 0.1 s after the menu closes.
+
+Five rows, each one finger high:
+
+| Row | Tap | Effect |
+|---|---|---|
+| CHANNEL `<` n `>` | the arrows | picks a channel; applied (through static) when the menu closes |
+| LOOK | anywhere | CLEAN or VINTAGE: with VINTAGE the player plays `videos/fuzzy/<same name>.mp4` when it exists, else the clean file (the fuzzy encodes are roadmap item 4) |
+| VOLUME `<` n `>` | the arrows | VLC's software gain in steps of 10, applied when video resumes |
+| SHUT DOWN | twice | the row turns red and asks for a second tap, then `sudo systemctl poweroff` with SHUTTING DOWN on the panel |
+| DONE | anywhere | closes the menu |
+
+A long press or 20 s without a touch also closes it. Look and volume are saved in
+`~/simpsonstv/settings.json` (defaults: volume 100, clean) and restored at boot. If Pillow is
+missing or `/dev/fb0` cannot be opened, the player logs it once and a long press does
+nothing.
+
+Touch coordinates: with the overlay's axis flags the GT911 reports X 0-639 and Y 0-479,
+which is the viewer's landscape frame when the controller's origin sits at the panel's native
+top-left corner. `SWAP_XY`, `FLIP_X` and `FLIP_Y` in `touch.py` correct it if it does not.
+To check: `sudo systemctl stop tvplayer`, then `python3 ~/simpsonstv/menu.py` draws the menu
+and, for every tap, prints the raw and screen coordinates and draws a red ring where the tap
+landed. Touch a corner: a ring at the opposite end of an axis means that axis is flipped.
 
 `buttons.py` polls the switch on GPIO 26 (pulled up). On: GPIO 18 high (backlight) and GPIO 19
 to ALT5 (PWM audio). Off: GPIO 18 low and GPIO 19 to input (mute). Video keeps running behind
@@ -220,6 +252,7 @@ one-off test clip over WiFi:
     cat /sys/class/drm/card0-DPI-1/status     # "connected"
     sudo journalctl -u tvplayer -u tvbutton -f
     sudo systemctl restart tvplayer
+    sudo systemctl stop tvplayer && python3 ~/simpsonstv/menu.py   # menu without the player
 
 Backups of the original boot files are left at `/boot/firmware/config.txt.bak-*` and
 `cmdline.txt.bak-*`.

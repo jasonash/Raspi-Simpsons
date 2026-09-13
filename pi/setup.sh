@@ -20,7 +20,7 @@ echo "==> 1. Packages (VLC with the Raspberry Pi DRM output, no desktop bits)"
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
     vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio python3-evdev \
-    device-tree-compiler evtest i2c-tools git exfatprogs
+    python3-pil fonts-dejavu-core device-tree-compiler evtest i2c-tools git exfatprogs
 
 echo "==> 2. Waveshare KMS panel overlay, and our overlay for its touch controller"
 install -m 644 "$HERE/overlays/vc4-kms-dpi-2inch8.dtbo" "$BOOT/overlays/"
@@ -77,9 +77,10 @@ install -m 644 "$HERE/asound.conf" /etc/asound.conf
 
 echo "==> 6. Scripts in $TV_DIR"
 install -d -o "$TV_USER" -g "$TV_USER" "$TV_DIR" "$TV_DIR/videos"
-install -m 755 -o "$TV_USER" -g "$TV_USER" "$HERE/player.py" "$HERE/channels.py" "$HERE/touch.py" "$HERE/buttons.py" "$HERE/encode.py" "$TV_DIR/"
-# player.py reads the touch panel through /dev/input (group input)
-usermod -aG input "$TV_USER"
+install -m 755 -o "$TV_USER" -g "$TV_USER" "$HERE/player.py" "$HERE/channels.py" "$HERE/touch.py" "$HERE/menu.py" "$HERE/buttons.py" "$HERE/encode.py" "$TV_DIR/"
+# player.py reads the touch panel through /dev/input (group input) and menu.py draws on
+# /dev/fb0 (group video)
+usermod -aG input,video "$TV_USER"
 
 echo "==> 7. systemd services"
 for svc in tvplayer tvbutton; do
