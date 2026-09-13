@@ -88,9 +88,15 @@ systemctl disable --now getty@tty1.service 2>/dev/null || true
 echo "==> 9. WiFi power save off"
 # The brcmfmac driver enables power save by default and a Zero / Zero 2 W then drops off
 # the network for minutes at a time when idle, which makes SSH and file copies unreliable.
-# NetworkManager only reads this on (re)connect, so it takes effect at the next reboot.
+# The conf.d default only applies to profiles that do not set powersave themselves, and the
+# profile Raspberry Pi Imager creates (via netplan) does set it, so it is also set on every
+# existing WiFi profile. NetworkManager reads this on (re)connect, so it takes effect at the
+# next reboot. A 2026-09-13 A/B showed no measurable difference either way on a weak link,
+# but every time the Pi vanished from the network completely it had power save on.
 install -d /etc/NetworkManager/conf.d
 printf '[connection]\nwifi.powersave=2\n' > /etc/NetworkManager/conf.d/wifi-powersave-off.conf
+nmcli -t -f NAME,TYPE connection show | awk -F: '$2 == "802-11-wireless" {print $1}' |
+  while read -r con; do nmcli connection modify "$con" 802-11-wireless.powersave 2; done
 
 echo "==> 10. USB thumb drive mount (episodes live in videos/ on an exFAT drive labelled SIMPSONSTV)"
 # nofail + a short device timeout: the Pi boots normally with no drive plugged in, and

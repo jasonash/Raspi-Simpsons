@@ -71,8 +71,11 @@ can also be done by hand.
    whenever VLC is not holding the display (boot, service restart), and without a getty it is
    plain black. Log in over SSH; there is no keyboard on this build anyway.
 9. **WiFi power save off**: `/etc/NetworkManager/conf.d/wifi-powersave-off.conf` sets
-   `wifi.powersave=2`. With the driver default (power save on) the Zero 2 W vanished from the
-   network for minutes at a time during its first setup. Takes effect on the next reconnect.
+   `wifi.powersave=2`, and the same is set with `nmcli` on every existing WiFi profile because
+   the profile Imager creates (a netplan file under `/etc/netplan/`) carries its own powersave
+   value that overrides the conf.d default. With the driver default (power save on) the Zero 2 W
+   vanished from the network for minutes at a time during its first setup, and once for good
+   until power-cycled. Takes effect on the next reconnect.
 10. **USB drive mount**: an fstab line mounts the exFAT drive labelled `SIMPSONSTV` at
    `/mnt/simpsonstv` with `nofail` and a 5 s device timeout, so the Pi boots normally without
    it, plus a udev rule (`/etc/udev/rules.d/99-simpsonstv-usb.rules`, `SYSTEMD_WANTS`) so the
