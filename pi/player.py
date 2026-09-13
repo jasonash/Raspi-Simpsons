@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Simpsons TV video player.
 
-Plays every .mp4 in the videos/ folder next to this script in a random
-order, forever, inside ONE long-lived VLC instance driven through libvlc
-(python3-vlc). The process never exits between episodes, so VLC keeps hold
+Plays every .mp4 on the USB drive (videos/ on the drive mounted at
+/mnt/simpsonstv, see setup.sh) plus any in the videos/ folder next to this
+script, in a random order, forever, inside ONE long-lived VLC instance
+driven through libvlc (python3-vlc). The process never exits between episodes, so VLC keeps hold
 of the display and the text console never gets a chance to show through.
 (The earlier version spawned a fresh cvlc per shuffled batch; every time a
 batch ended the tty1 login prompt flashed on the panel for a second.)
@@ -12,8 +13,10 @@ Uses the Raspberry Pi DRM video output and the bcm2835 hardware H.264
 decoder. Videos should already be encoded for the panel (see encode.py):
 480x640, pre-rotated so no rotation is needed at playback time.
 
-New files dropped into videos/ are picked up on the next rescan and appended
-to the running playlist without interrupting playback.
+New files dropped into either folder are picked up on the next rescan and
+appended to the running playlist without interrupting playback. A file is
+ignored until it has stopped changing for a minute so a copy in progress is
+never queued half-written.
 """
 import os
 import random
@@ -23,7 +26,11 @@ from urllib.parse import unquote
 import vlc
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-VIDEO_DIR = os.path.join(HERE, 'videos')
+VIDEO_DIRS = [
+    '/mnt/simpsonstv/videos',        # USB thumb drive (fstab mount, absent is fine)
+    os.path.join(HERE, 'videos'),    # local folder, handy for test clips
+]
+SETTLE_SECONDS = 60      # ignore files modified more recently than this (copy in progress)
 
 VLC_ARGS = [
     '--quiet',
@@ -34,7 +41,7 @@ VLC_ARGS = [
     '--codec=v4l2m2m,avcodec',   # prefer the BCM2835 hardware decoder
 ]
 
-RESCAN_SECONDS = 30      # how often to look for new files in videos/
+RESCAN_SECONDS = 30      # how often to look for new files
 STATS_SECONDS = 600      # how often to log decoder/display counters
 
 
@@ -43,17 +50,31 @@ def log(msg):
 
 
 def get_videos():
-    try:
-        names = os.listdir(VIDEO_DIR)
-    except FileNotFoundError:
-        return []
-    return sorted(os.path.join(VIDEO_DIR, n) for n in names if n.lower().endswith('.mp4'))
+    cutoff = time.time() - SETTLE_SECONDS
+    found = []
+    for d in VIDEO_DIRS:
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for n in names:
+            # Skip macOS "._foo.mp4" resource forks that Finder leaves on exFAT drives.
+            if n.startswith('.') or not n.lower().endswith('.mp4'):
+                continue
+            path = os.path.join(d, n)
+            try:
+                if os.path.getmtime(path) > cutoff:
+                    continue
+            except OSError:
+                continue
+            found.append(path)
+    return sorted(found)
 
 
 def main():
     videos = get_videos()
     while not videos:
-        log('No videos in %s, waiting...' % VIDEO_DIR)
+        log('No videos in %s, waiting...' % ' or '.join(VIDEO_DIRS))
         time.sleep(10)
         videos = get_videos()
     random.shuffle(videos)

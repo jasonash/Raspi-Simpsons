@@ -17,7 +17,7 @@ landscape), PAM8302-style amp on GPIO 19, power knob switch on GPIO 26, panel ba
 | `raspi-gpio set 18 op dl` in `/etc/rc.local` | `raspi-gpio` is gone, replaced by `pinctrl`. `rc.local` is gone too. |
 | `RPi.GPIO` in buttons.py | Replaced by the `python3-rpi-lgpio` shim, same API, already installed on Trixie. |
 | `omxplayer` | Removed from Debian. Use VLC with the Raspberry Pi `drm_vout` output and the `bcm2835-codec` V4L2 hardware H.264 decoder. |
-| `sudo apt-get install usbmount`, udevd `PrivateMounts` edit | Still works but unnecessary; just `scp` videos over WiFi. |
+| `sudo apt-get install usbmount`, udevd `PrivateMounts` edit | Replaced by an fstab mount of a labelled exFAT drive (see below). |
 | `/usr/bin/python` in the service files | Python 2 is gone. Use `/usr/bin/python3`. |
 
 ## Quick replay (Zero 2 W)
@@ -33,14 +33,15 @@ landscape), PAM8302-style amp on GPIO 19, power knob switch on GPIO 26, panel ba
        scp -r pi/ USER@HOST:~/simpsonstv-setup
        ssh USER@HOST 'cd simpsonstv-setup && sudo bash setup.sh'
 
-4. Encode episodes on the Mac (see below), copy them into `~/simpsonstv/videos/`, reboot.
+4. Encode episodes on the Mac (see below), copy them to the `SIMPSONSTV` thumb drive, plug it
+   into the Pi, reboot.
 
 `setup.sh` is idempotent and prints what it does. Everything it touches is listed below so it
 can also be done by hand.
 
 ## What `setup.sh` does
 
-1. **Packages**: `vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio git`
+1. **Packages**: `vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio git exfatprogs`
    (with `--no-install-recommends`; the full `vlc` metapackage drags in Qt and X11).
 2. **Overlay**: copies `pi/overlays/vc4-kms-dpi-2inch8.dtbo` (from Waveshare's
    [28DPI-DTBO.zip](https://files.waveshare.com/wiki/2.8inc-DPI-LCD/28DPI-DTBO.zip)) into
@@ -69,16 +70,37 @@ can also be done by hand.
 8. **No login prompt**: `systemctl disable --now getty@tty1`. tty1 is what the panel shows
    whenever VLC is not holding the display (boot, service restart), and without a getty it is
    plain black. Log in over SSH; there is no keyboard on this build anyway.
+9. **WiFi power save off**: `/etc/NetworkManager/conf.d/wifi-powersave-off.conf` sets
+   `wifi.powersave=2`. With the driver default (power save on) the Zero 2 W vanished from the
+   network for minutes at a time during its first setup. Takes effect on the next reconnect.
+10. **USB drive mount**: an fstab line mounts the exFAT drive labelled `SIMPSONSTV` at
+   `/mnt/simpsonstv` with `nofail` and a 5 s device timeout, so the Pi boots normally without
+   it and systemd mounts it whenever it is plugged in. Episodes go in `videos/` on the drive.
+
+## Episodes on a USB thumb drive
+
+WiFi on a Zero is far too slow for a full run of episodes (a season is ~2.7 GB, the whole show
+well over 100 GB), so they live on a thumb drive through a micro-USB OTG adapter. Format it
+on the Mac as exFAT with the volume name `SIMPSONSTV` (readable and writable by both macOS
+and the Pi), make a `videos` folder at its root, and copy encoded episodes there. If the drive
+is a new one, check its real capacity first with `f3` (`brew install f3`, then `f3write` and
+`f3read` against the mounted volume) before trusting it with 100 GB of episodes.
+
+    diskutil eraseDisk ExFAT SIMPSONSTV MBR /dev/diskN      # find N with: diskutil list external
+
+The player ignores macOS `._*` resource-fork files and anything modified in the last minute,
+so a copy in progress is never queued half-written.
 
 ## How playback works
 
-`player.py` shuffles every `.mp4` in `~/simpsonstv/videos/` into one libvlc media list player
+`player.py` shuffles every `.mp4` in `videos/` on the USB drive (and in `~/simpsonstv/videos/`,
+kept for test clips) into one libvlc media list player
 (`python3-vlc`) with `--vout=drm_vout --codec=v4l2m2m,avcodec`, in loop mode, and keeps that
 single VLC instance alive for the life of the service. VLC opens the DRM output once and
 reuses it across episodes (confirmed in the verbose log: one `OpenDrmVout`, no close), so the
 console never shows through between items. An earlier version spawned a fresh `cvlc` per
 batch and the tty1 login prompt flashed on the panel every time a batch ended. New files
-copied into `videos/` are appended to the playlist within 30 s. Every 10 minutes the journal
+copied into either folder are appended to the playlist within 30 s of settling. Every 10 minutes the journal
 gets a line with displayed and lost frame counts.
 
 Measured on the Zero W: about 30 to 38 percent CPU for a 480x640 24 fps H.264 episode, with
@@ -98,7 +120,8 @@ Produces `encoded/*.mp4`: scaled to fill 640x480 and cropped (a 16:9 episode los
 to 480x640 (`transpose=2`), H.264 Baseline yuv420p 24 fps, mono AAC. The Zero W cannot rotate
 at playback time without dropping frames, so the rotation is baked in. If picture comes out
 upside down, change `transpose=2` to `transpose=1` in `encode.py` and `rotate=90` to
-`rotate=270` in `setup.sh`. Copy with:
+`rotate=270` in `setup.sh`. Copy the results into `videos/` on the SIMPSONSTV drive, or for a
+one-off test clip over WiFi:
 
     scp encoded/*.mp4 USER@HOST:~/simpsonstv/videos/
 

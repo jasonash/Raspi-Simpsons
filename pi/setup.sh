@@ -19,7 +19,7 @@ BOOT=/boot/firmware
 echo "==> 1. Packages (VLC with the Raspberry Pi DRM output, no desktop bits)"
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-    vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio git
+    vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio git exfatprogs
 
 echo "==> 2. Waveshare KMS panel overlay"
 install -m 644 "$HERE/overlays/vc4-kms-dpi-2inch8.dtbo" "$BOOT/overlays/"
@@ -85,5 +85,23 @@ echo "==> 8. No login prompt on the panel"
 # plain black. Log in over SSH instead.
 systemctl disable --now getty@tty1.service 2>/dev/null || true
 
+echo "==> 9. WiFi power save off"
+# The brcmfmac driver enables power save by default and a Zero / Zero 2 W then drops off
+# the network for minutes at a time when idle, which makes SSH and file copies unreliable.
+# NetworkManager only reads this on (re)connect, so it takes effect at the next reboot.
+install -d /etc/NetworkManager/conf.d
+printf '[connection]\nwifi.powersave=2\n' > /etc/NetworkManager/conf.d/wifi-powersave-off.conf
+
+echo "==> 10. USB thumb drive mount (episodes live in videos/ on an exFAT drive labelled SIMPSONSTV)"
+# nofail + a short device timeout: the Pi boots normally with no drive plugged in, and
+# systemd mounts the drive whenever it appears. player.py polls the folder, so plugging
+# the drive in after boot just works.
+install -d /mnt/simpsonstv
+TV_UID="$(id -u "$TV_USER")"; TV_GID="$(id -g "$TV_USER")"
+grep -q '^LABEL=SIMPSONSTV ' /etc/fstab || \
+    echo "LABEL=SIMPSONSTV /mnt/simpsonstv exfat nofail,x-systemd.device-timeout=5,uid=$TV_UID,gid=$TV_GID,umask=022,noatime 0 0" >> /etc/fstab
+systemctl daemon-reload
+
 echo
+echo "Done. Put encoded episodes in videos/ on the SIMPSONSTV drive (or $TV_DIR/videos) and reboot:  sudo reboot"
 echo "Done. Copy encoded episodes into $TV_DIR/videos and reboot:  sudo reboot"
