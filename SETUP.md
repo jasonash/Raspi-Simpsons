@@ -269,6 +269,27 @@ next to the clean files. The player ignores subfolders when building the library
 looks in `fuzzy/` for the twin of the file it is about to play, so a half-copied fuzzy set
 just means some episodes stay clean under VINTAGE.
 
+### The whole library in one go
+
+    python3 pi/encode.py --out /Volumes/8TB/SimpsonsTV --fuzzy -j 3 /Volumes/8TB/NG/complete
+
+walks every season folder under the source and writes the drive layout directly:
+`SimpsonsTV/videos/*.mp4`, `SimpsonsTV/videos/fuzzy/*.mp4`, the `static/` clips from
+`pi/static/` and a draft `channels.json` (1 = everything, 2 = seasons 1 to 9, 3 = 10 to 19,
+4 = 20 onward; edit to taste). Episodes that already exist in a season's old `encoded/`
+folder are copied in rather than re-encoded. `-j 3` encodes three episodes at once with the
+Mac's hardware HEVC decoder doing the source decode; on an M4 Pro that is about 65 s per
+episode against 93 s one at a time, so 797 episodes take about 14 hours. The terminal and
+`SimpsonsTV/encode.log` get a line per finished episode with elapsed time and an ETA, and a
+list of any file ffmpeg rejected at the end. The Mac is kept awake with `caffeinate` while
+it runs.
+
+Stopping and resuming: Ctrl-C stops it (partial files are removed, running ffmpegs are told
+to quit) and the same command resumes from the first missing output; Ctrl-Z and `fg` pause
+and continue. If it was started in the background, `pkill -INT -f "encode.py --out"` is the
+same as Ctrl-C. When it reports finished, plug the SIMPSONSTV drive into the Mac and copy the
+contents of `SimpsonsTV/` to the drive's root (about 200 GB for 37 seasons, both looks).
+
 ## Handy commands on the Pi
 
     pinctrl get 10,11,18,19,26,27             # pin state (10/11/27 are the touch bus)

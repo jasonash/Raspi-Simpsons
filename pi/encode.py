@@ -16,6 +16,20 @@ Output: the same, plus encoded/fuzzy/<same name>.mp4 for every episode: the
         stopped and resumed over as many days as it takes. Running --fuzzy
         over a folder that already has clean encodes only adds the fuzzy set.
 
+        python3 encode.py --out /Volumes/8TB/SimpsonsTV --fuzzy -j 3 /Volumes/8TB/NG/complete
+Output: the whole library, laid out exactly as the USB drive wants it:
+        SimpsonsTV/videos/*.mp4, SimpsonsTV/videos/fuzzy/*.mp4, the static/
+        clips and a draft channels.json. Every season folder under the source
+        is walked; episodes already sitting in a season's old encoded/ folder
+        are copied in rather than re-encoded. -j runs that many episodes at
+        once (three is the sweet spot on an M4 Pro, with the hardware HEVC
+        decoder doing the source decode). Progress, per-episode times and an
+        ETA go to the terminal and to SimpsonsTV/encode.log. The Mac is kept
+        awake (caffeinate) while it runs. Ctrl-C stops it cleanly (partial
+        files removed) and running the same command again resumes; Ctrl-Z
+        and fg pause and continue it. When it is done, copy the contents of
+        SimpsonsTV/ to the root of the SIMPSONSTV drive.
+
         python3 encode.py --sample 20 [--fuzzy] /path/to/folder
 Output: encoded/sample/: 20 s of each episode starting a minute in, for
         checking the look before committing to a long batch.
@@ -42,9 +56,15 @@ What it does, and why:
 
 Requires ffmpeg (brew install ffmpeg).
 """
+import concurrent.futures
+import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
+import threading
+import time
 
 EXTS = ('.mp4', '.mkv', '.mov', '.avi', '.m4v')
 
@@ -78,6 +98,15 @@ FUZZY = ','.join([
 SCANLINE_PERIOD = 3
 SCANLINE_ALPHA = 90      # 0-255, how dark the stripe is
 SCANLINES_PNG = '.scanlines.png'
+
+# Draft channel line-up written next to a --out library (the drive's root channels.json).
+# "match" strings are substrings of the file name, so season codes must be two digits.
+CHANNELS = {"channels": [
+    {"name": "1"},
+    {"name": "2", "match": ['S%02d' % n for n in range(1, 10)]},
+    {"name": "3", "match": ['S%02d' % n for n in range(10, 20)]},
+    {"name": "4", "match": ['S%02d' % n for n in range(20, 40)]},
+]}
 
 STATIC_SECONDS = 1.0
 STATIC_GRAIN = '320x240'     # noise is generated at this size and doubled: chunkier snow, smaller file
@@ -144,9 +173,30 @@ def make_scanlines(path):
     ], check=True)
 
 
-def encode(src, clean, fuzzy, scanlines, sample=None):
+class Runner:
+    """Bookkeeping shared by the worker threads: which ffmpegs are running, and a stop flag."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.procs = set()
+        self.stop = False
+
+    def interrupt(self):
+        """Ctrl-C: let no new job start, ask every running ffmpeg to quit."""
+        self.stop = True
+        with self.lock:
+            for p in self.procs:
+                try:
+                    p.send_signal(signal.SIGINT)
+                except OSError:
+                    pass
+
+
+def encode(src, clean, fuzzy, scanlines, sample=None, runner=None, hwaccel=False, stats=True):
     """One ffmpeg run writing whichever of `clean` and `fuzzy` is not None."""
-    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-stats', '-y']
+    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-stats' if stats else '-nostats', '-y']
+    if hwaccel:
+        cmd += ['-hwaccel', 'videotoolbox']
     if sample:
         cmd += ['-ss', '60', '-t', str(sample)]
     cmd += ['-i', src]
@@ -171,21 +221,58 @@ def encode(src, clean, fuzzy, scanlines, sample=None):
         part = out + '.part'
         parts.append((part, out))
         cmd += ['-map', label, '-map', '0:a:0?', *ENCODE, '-crf', crf, '-f', 'mp4', part]
+    runner = runner or Runner()
+    proc = subprocess.Popen(cmd)
+    with runner.lock:
+        runner.procs.add(proc)
     try:
-        result = subprocess.run(cmd)
+        code = proc.wait()
     except KeyboardInterrupt:
-        result = None
-    if result is None or result.returncode != 0:
+        # Single-job mode: the terminal also sent SIGINT to ffmpeg; give it a moment.
+        runner.interrupt()
+        code = proc.wait()
+    finally:
+        with runner.lock:
+            runner.procs.discard(proc)
+    if code != 0:
         for part, _ in parts:
             if os.path.isfile(part):
                 os.remove(part)
-        if result is None:
+        if runner.stop:
             raise KeyboardInterrupt
         print('ffmpeg failed on', os.path.basename(src), file=sys.stderr, flush=True)
         return False
     for part, out in parts:
         os.replace(part, out)
     return True
+
+
+def find_sources(src, out_root):
+    """Every episode under `src`, in name order, skipping encoded/ folders and the output."""
+    found = []
+    for dp, dirs, fns in os.walk(src):
+        dirs[:] = sorted(d for d in dirs
+                         if d != 'encoded' and os.path.join(dp, d) != out_root)
+        found += [os.path.join(dp, f) for f in fns if f.lower().endswith(EXTS)]
+    return sorted(found, key=lambda p: os.path.basename(p).lower())
+
+
+def adopt(path, name, target):
+    """Copy an encode of `path` from a season folder's old encoded/ tree into `target` if
+    one exists (encoded/<name> for clean, encoded/fuzzy/<name> for fuzzy). True if adopted."""
+    sub = os.path.basename(os.path.dirname(target)) == 'fuzzy'
+    for base in (os.path.dirname(path), os.path.dirname(os.path.dirname(path))):
+        old = os.path.join(base, 'encoded', 'fuzzy', name) if sub else os.path.join(base, 'encoded', name)
+        if os.path.isfile(old) and os.path.realpath(old) != os.path.realpath(target):
+            shutil.copy2(old, target + '.part')
+            os.replace(target + '.part', target)
+            return True
+    return False
+
+
+def hms(seconds):
+    seconds = int(seconds)
+    return '%d:%02d:%02d' % (seconds // 3600, seconds // 60 % 60, seconds % 60)
 
 
 def main():
@@ -196,43 +283,126 @@ def main():
         return
     fuzzy = False
     sample = None
-    while args and args[0].startswith('--'):
+    out = None
+    jobs = 1
+    while args and args[0].startswith('-'):
         flag = args.pop(0)
         if flag == '--fuzzy':
             fuzzy = True
         elif flag == '--sample':
             sample = int(args.pop(0))
+        elif flag == '--out':
+            out = os.path.abspath(args.pop(0))
+        elif flag == '-j':
+            jobs = max(1, int(args.pop(0)))
         else:
             sys.exit('unknown option ' + flag)
-    src = args[0] if args else here
-    dst = os.path.join(src, 'encoded')
-    if sample:
-        dst = os.path.join(dst, 'sample')
+    src = os.path.abspath(args[0] if args else here)
+
+    if out:
+        dst = os.path.join(out, 'sample' if sample else 'videos')
+        log_path = os.path.join(out, 'encode.log')
+    else:
+        dst = os.path.join(src, 'encoded', 'sample') if sample else os.path.join(src, 'encoded')
+        log_path = os.path.join(dst, 'encode.log')
     fuzzy_dir = os.path.join(dst, 'fuzzy')
     os.makedirs(fuzzy_dir if fuzzy else dst, exist_ok=True)
     scanlines = os.path.join(fuzzy_dir, SCANLINES_PNG)
     if fuzzy:
         make_scanlines(scanlines)
+    if out and not sample:
+        # The rest of what the drive's root wants: static clips and a channel line-up.
+        static_src = os.path.join(here, 'static')
+        if os.path.isdir(static_src):
+            os.makedirs(os.path.join(out, 'static'), exist_ok=True)
+            for n in os.listdir(static_src):
+                if n.endswith('.mp4') and not os.path.isfile(os.path.join(out, 'static', n)):
+                    shutil.copy2(os.path.join(static_src, n), os.path.join(out, 'static', n))
+        if not os.path.isfile(os.path.join(out, 'channels.json')):
+            with open(os.path.join(out, 'channels.json'), 'w') as f:
+                json.dump(CHANNELS, f, indent=2)
 
-    files = sorted(
-        os.path.join(dp, f)
-        for dp, _, fns in os.walk(src)
-        for f in fns
-        if f.lower().endswith(EXTS) and not dp.startswith(os.path.join(src, 'encoded'))
-    )
-    for path in files:
+    logf = open(log_path, 'a')
+
+    def log(msg):
+        line = '%s %s' % (time.strftime('%Y-%m-%d %H:%M:%S'), msg)
+        print(line, flush=True)
+        logf.write(line + '\n')
+        logf.flush()
+
+    # Plan: (source, clean target or None, fuzzy target or None) for everything not done.
+    todo = []
+    adopted = 0
+    for path in find_sources(src, out):
         name = os.path.splitext(os.path.basename(path))[0] + '.mp4'
-        clean = os.path.join(dst, name)
-        want_clean = None if os.path.isfile(clean) else clean
-        want_fuzzy = None
-        if fuzzy:
-            f = os.path.join(fuzzy_dir, name)
-            want_fuzzy = None if os.path.isfile(f) else f
-        if not want_clean and not want_fuzzy:
-            continue
-        print('Encoding %s (%s)' % (name, ' + '.join(
-            w for w, x in (('clean', want_clean), ('fuzzy', want_fuzzy)) if x)), flush=True)
-        encode(path, want_clean, want_fuzzy, scanlines, sample)
+        want = []
+        for target in [os.path.join(dst, name)] + ([os.path.join(fuzzy_dir, name)] if fuzzy else []):
+            if os.path.isfile(target):
+                want.append(None)
+            elif out and not sample and adopt(path, name, target):
+                adopted += 1
+                want.append(None)
+            else:
+                want.append(target)
+        want += [None] * (2 - len(want))
+        if want[0] or want[1]:
+            todo.append((path, want[0], want[1]))
+    total = len(todo)
+    if adopted:
+        log('Adopted %d finished encode(s) from season encoded/ folders' % adopted)
+    if not todo:
+        log('Nothing to do: every output exists')
+        return
+    log('%d episode(s) to encode%s, %d at a time, into %s' % (
+        total, ' (clean + fuzzy)' if fuzzy else '', jobs, dst))
+
+    if sys.platform == 'darwin' and shutil.which('caffeinate'):
+        subprocess.Popen(['caffeinate', '-i', '-w', str(os.getpid())])
+
+    runner = Runner()
+    done = 0
+    failed = []
+    started = time.monotonic()
+    lock = threading.Lock()
+
+    def work(item):
+        path, clean, fz = item
+        if runner.stop:
+            return None
+        t0 = time.monotonic()
+        ok = encode(path, clean, fz, scanlines, sample, runner,
+                    hwaccel=(jobs > 1 and sys.platform == 'darwin'), stats=(jobs == 1))
+        return (path, ok, time.monotonic() - t0)
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs)
+    futures = [pool.submit(work, item) for item in todo]
+    try:
+        for fut in concurrent.futures.as_completed(futures):
+            result = fut.result()
+            if result is None:
+                continue
+            path, ok, took = result
+            name = os.path.basename(path)
+            with lock:
+                done += 1
+                if not ok:
+                    failed.append(name)
+                elapsed = time.monotonic() - started
+                rate = elapsed / done          # wall time per finished episode, all jobs together
+                log('[%d/%d] %s %s in %d s, elapsed %s, ETA %s (%.0f s/episode)' % (
+                    done, total, name, 'done' if ok else 'FAILED', took, hms(elapsed),
+                    hms(rate * (total - done)), rate))
+    except KeyboardInterrupt:
+        runner.interrupt()
+        pool.shutdown(wait=True, cancel_futures=True)
+        log('Stopped after %d of %d; run the same command again to resume' % (done, total))
+        sys.exit(130)
+    pool.shutdown(wait=True)
+    if failed:
+        log('FAILED (%d): %s' % (len(failed), ', '.join(failed)))
+    log('Finished %d of %d in %s' % (done - len(failed), total, hms(time.monotonic() - started)))
+    if out and not sample:
+        log('Copy the contents of %s to the root of the SIMPSONSTV drive' % out)
 
 
 if __name__ == '__main__':
