@@ -101,6 +101,13 @@ TV_UID="$(id -u "$TV_USER")"; TV_GID="$(id -g "$TV_USER")"
 grep -q '^LABEL=SIMPSONSTV ' /etc/fstab || \
     echo "LABEL=SIMPSONSTV /mnt/simpsonstv exfat nofail,x-systemd.device-timeout=5,uid=$TV_UID,gid=$TV_GID,umask=022,noatime 0 0" >> /etc/fstab
 systemctl daemon-reload
+# The fstab line alone only mounts a drive that is present at boot. This udev rule makes
+# systemd start the mount unit whenever a drive with that label appears.
+cat > /etc/udev/rules.d/99-simpsonstv-usb.rules <<'EOF'
+# Simpsons TV: mount the episode drive whenever it is plugged in (fstab line in setup.sh)
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="SIMPSONSTV", ENV{SYSTEMD_WANTS}+="mnt-simpsonstv.mount"
+EOF
+udevadm control --reload
 
 echo
 echo "Done. Put encoded episodes in videos/ on the SIMPSONSTV drive (or $TV_DIR/videos) and reboot:  sudo reboot"

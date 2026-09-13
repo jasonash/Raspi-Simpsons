@@ -75,7 +75,9 @@ can also be done by hand.
    network for minutes at a time during its first setup. Takes effect on the next reconnect.
 10. **USB drive mount**: an fstab line mounts the exFAT drive labelled `SIMPSONSTV` at
    `/mnt/simpsonstv` with `nofail` and a 5 s device timeout, so the Pi boots normally without
-   it and systemd mounts it whenever it is plugged in. Episodes go in `videos/` on the drive.
+   it, plus a udev rule (`/etc/udev/rules.d/99-simpsonstv-usb.rules`, `SYSTEMD_WANTS`) so the
+   mount also happens when the drive is plugged in after boot; the fstab line alone did not
+   do that. Episodes go in `videos/` on the drive.
 
 ## Episodes on a USB thumb drive
 
