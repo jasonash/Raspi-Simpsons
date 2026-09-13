@@ -16,7 +16,7 @@ landscape), PAM8302-style amp on GPIO 19, power knob switch on GPIO 26, panel ba
 | `dtoverlay=waveshare-28dpi-*` | Those files are the old touch overlays and are not in the OS. Waveshare now ships a KMS panel overlay, `vc4-kms-dpi-2inch8`. |
 | `raspi-gpio set 18 op dl` in `/etc/rc.local` | `raspi-gpio` is gone, replaced by `pinctrl`. `rc.local` is gone too. |
 | `RPi.GPIO` in buttons.py | Replaced by the `python3-rpi-lgpio` shim, same API, already installed on Trixie. |
-| `omxplayer` | Removed from Debian. Use VLC with the Raspberry Pi `drm_vout` output and the `bcm2835-codec` V4L2 hardware H.264 decoder. |
+| `omxplayer` | Removed from Debian. Use VLC with the Raspberry Pi `drm_vout` output. Decoding is done in software: VLC's `h264_v4l2m2m` hardware path plays the picture at half speed on the Zero 2 W (see below). |
 | `sudo apt-get install usbmount`, udevd `PrivateMounts` edit | Replaced by an fstab mount of a labelled exFAT drive (see below). |
 | `/usr/bin/python` in the service files | Python 2 is gone. Use `/usr/bin/python3`. |
 
@@ -95,17 +95,31 @@ so a copy in progress is never queued half-written.
 
 `player.py` shuffles every `.mp4` in `videos/` on the USB drive (and in `~/simpsonstv/videos/`,
 kept for test clips) into one libvlc media list player
-(`python3-vlc`) with `--vout=drm_vout --codec=v4l2m2m,avcodec`, in loop mode, and keeps that
-single VLC instance alive for the life of the service. VLC opens the DRM output once and
-reuses it across episodes (confirmed in the verbose log: one `OpenDrmVout`, no close), so the
+(`python3-vlc`) with `--vout=drm_vout --codec=avcodec --avcodec-codec=h264`, in loop mode, and
+keeps that single VLC instance alive for the life of the service. VLC opens the DRM output once
+and reuses it across episodes (confirmed in the verbose log: one `OpenDrmVout`, no close), so the
 console never shows through between items. An earlier version spawned a fresh `cvlc` per
 batch and the tty1 login prompt flashed on the panel every time a batch ended. New files
-copied into either folder are appended to the playlist within 30 s of settling. Every 10 minutes the journal
-gets a line with displayed and lost frame counts.
+copied into either folder are appended to the playlist within 30 s of settling. Every 10 minutes
+the journal gets a line with displayed and lost frame counts.
 
-Measured on the Zero W: about 30 to 38 percent CPU for a 480x640 24 fps H.264 episode, with
-VLC's log confirming `h264_v4l2m2m` on `/dev/video10` and `drm_vout` taking YU12 buffers
-directly (zero copy), and zero lost frames over a 75 s instrumented run.
+**Why software decoding.** On the Zero 2 W, VLC's hardware decoder path (`h264_v4l2m2m` via
+the Raspberry Pi avcodec patches, `/dev/video10`) decodes fine but the picture reaches the
+panel at exactly half speed while the audio and VLC's own position clock run at full speed,
+so the picture falls a second behind the sound every two seconds. VLC's counters still claim
+24 frames per second. This was pinned down on 2026-09-13 with a test clip that shows a digit
+and beeps that many times: the digit changed every 20 s through the hardware path (measured
+by hashing `/dev/fb0` through the `fb` output) and every 10.0 s with `--avcodec-codec=h264`.
+ffmpeg's own `h264_v4l2m2m` decode on the same board is correct, so the fault is in VLC's use
+of it, not the driver. Software decoding of a 480x640 24 fps Baseline stream costs about a
+quarter to a half of one of the four cores, so it is the right trade. The Zero W was set up
+with the hardware path and did not show this; it is not known whether that was the single
+core, the `v6` kernel, or package versions. A hardware-decode fix is an open item, not a
+requirement.
+
+Measured on the Zero 2 W with software decoding: VLC around 25 percent of one core, board at
+about 52 C, 24.1 page flips per second on the panel (counted from the DRM debug state), zero
+lost frames.
 
 `buttons.py` polls the switch on GPIO 26 (pulled up). On: GPIO 18 high (backlight) and GPIO 19
 to ALT5 (PWM audio). Off: GPIO 18 low and GPIO 19 to input (mute). Video keeps running behind

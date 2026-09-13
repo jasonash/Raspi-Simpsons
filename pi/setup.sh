@@ -104,4 +104,3 @@ systemctl daemon-reload
 
 echo
 echo "Done. Put encoded episodes in videos/ on the SIMPSONSTV drive (or $TV_DIR/videos) and reboot:  sudo reboot"
-echo "Done. Copy encoded episodes into $TV_DIR/videos and reboot:  sudo reboot"

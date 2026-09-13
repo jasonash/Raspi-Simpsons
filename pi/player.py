@@ -9,9 +9,10 @@ of the display and the text console never gets a chance to show through.
 (The earlier version spawned a fresh cvlc per shuffled batch; every time a
 batch ended the tty1 login prompt flashed on the panel for a second.)
 
-Uses the Raspberry Pi DRM video output and the bcm2835 hardware H.264
-decoder. Videos should already be encoded for the panel (see encode.py):
-480x640, pre-rotated so no rotation is needed at playback time.
+Uses the Raspberry Pi DRM video output and VLC's software H.264 decoder
+(the hardware decoder path runs at half speed on the Zero 2 W, see VLC_ARGS).
+Videos should already be encoded for the panel (see encode.py): 480x640,
+pre-rotated so no rotation is needed at playback time.
 
 New files dropped into either folder are picked up on the next rescan and
 appended to the running playlist without interrupting playback. A file is
@@ -36,9 +37,14 @@ VLC_ARGS = [
     '--quiet',
     '--no-osd',
     '--no-video-title-show',
-    '--vout=drm_vout',           # Raspberry Pi KMS/DRM output (zero-copy from the HW decoder)
+    '--vout=drm_vout',           # Raspberry Pi KMS/DRM output, holds the panel between episodes
     '--aout=alsa',
-    '--codec=v4l2m2m,avcodec',   # prefer the BCM2835 hardware decoder
+    '--codec=avcodec',
+    '--avcodec-codec=h264',      # software H.264. VLC's h264_v4l2m2m hardware path plays the
+                                 # picture at exactly half speed on the Zero 2 W (audio and
+                                 # demux clock run at 1x, picture falls behind), measured
+                                 # 2026-09-13. Software decode of 480x640 24 fps costs about
+                                 # half of one of the four cores.
 ]
 
 RESCAN_SECONDS = 30      # how often to look for new files
