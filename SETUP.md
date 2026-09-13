@@ -41,17 +41,20 @@ can also be done by hand.
 
 ## What `setup.sh` does
 
-1. **Packages**: `vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio git exfatprogs`
+1. **Packages**: `vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio
+   python3-evdev device-tree-compiler evtest i2c-tools git exfatprogs`
    (with `--no-install-recommends`; the full `vlc` metapackage drags in Qt and X11).
 2. **Overlay**: copies `pi/overlays/vc4-kms-dpi-2inch8.dtbo` (from Waveshare's
    [28DPI-DTBO.zip](https://files.waveshare.com/wiki/2.8inc-DPI-LCD/28DPI-DTBO.zip)) into
    `/boot/firmware/overlays/`. It is `vc4-kms-dpi-generic` with the panel timings baked in:
    480x640, 26.88 MHz pixel clock, RGB666 on GPIO 0-9, 12-17, 20-25, which leaves 18, 19 and 26
-   free for backlight, audio and the switch.
+   free for backlight, audio and the switch. Also compiles `pi/overlays/simpsonstv-touch.dts`
+   into `/boot/firmware/overlays/` for the touch controller (see "Touch" below).
 3. **`/boot/firmware/config.txt`**, `[all]` section (legacy lines removed):
 
        dtoverlay=vc4-kms-dpi-2inch8,rotate=90
        dtoverlay=audremap,enable_jack,pins_18_19
+       dtoverlay=simpsonstv-touch
 
    `rotate=90` matches a panel whose native top edge is on the viewer's right. It only affects
    the text console; video is pre-rotated at encode time. `enable_jack` is what makes the
@@ -129,6 +132,29 @@ Measured on the Zero 2 W with software decoding: VLC around 25 percent of one co
 about 52 C, 24.1 page flips per second on the panel (counted from the DRM debug state), zero
 lost frames.
 
+## Touch
+
+The panel's capacitive touch is a Goodix GT911 on the display's own I2C lines: header pins
+19, 23 and 13, which are GPIO 10 (SDA), 11 (SCL) and 27 (interrupt). The hardware I2C pins
+are part of the DPI bus, so the bus is bit-banged with the kernel's `i2c-gpio` driver.
+Waveshare's `waveshare-touch-28dpi.dtbo` (in the same zip as the panel overlay) does exactly
+that, but it also declares GPIO 18 as a kernel `gpio-backlight`, which would take the pin
+away from `buttons.py`. `pi/overlays/simpsonstv-touch.dts` is the same thing without the
+backlight node, one GT911 node at address 0x5d (the address the controller actually answers
+on, checked with `i2cdetect`), and the mainline `goodix` driver. It compiles with `dtc` in
+`setup.sh`. The controller shows up as `/dev/input/eventN`, name "Goodix Capacitive
+TouchScreen", and reports `BTN_TOUCH` plus X 0-639, Y 0-479 (Waveshare's axis swap; only the
+future menu cares about coordinates).
+
+`touch.py` reads it with `python3-evdev` in a thread inside the player and turns it into two
+gestures: a **tap** (down and up within 0.4 s, less than 30 units of movement) and a **long
+press** (held still for 0.8 s, fires while the finger is still down). Swipes, slow taps and
+extra fingers do nothing. A tap is "change channel" and a long press is "open the menu".
+Until the channel controller exists, a tap skips to the next episode (taps within 1 s of the
+last change are ignored) and a long press only logs. `python3 touch.py` prints gestures for
+tuning the thresholds; `evtest` shows the raw events. The service user must be in the
+`input` group (the installer does this).
+
 `buttons.py` polls the switch on GPIO 26 (pulled up). On: GPIO 18 high (backlight) and GPIO 19
 to ALT5 (PWM audio). Off: GPIO 18 low and GPIO 19 to input (mute). Video keeps running behind
 a dark screen, same as the original design. Flip `INVERT_SWITCH` if the knob is backwards.
@@ -149,7 +175,10 @@ one-off test clip over WiFi:
 
 ## Handy commands on the Pi
 
-    pinctrl get 18,19,26                      # pin state
+    pinctrl get 10,11,18,19,26,27             # pin state (10/11/27 are the touch bus)
+    sudo dmesg | grep Goodix                  # "Goodix-TS 11-005d" = bus 11, address 0x5d
+    sudo i2cdetect -y 11                      # the GT911 should show at 5d
+    sudo evtest                               # pick the Goodix device, then poke the screen
     aplay -l                                  # should list "bcm2835 Headphones"
     speaker-test -D default -c 2 -t sine -l 1 # tone through the TV speaker
     cat /sys/class/drm/card0-DPI-1/status     # "connected"

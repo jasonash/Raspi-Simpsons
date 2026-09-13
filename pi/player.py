@@ -18,13 +18,20 @@ New files dropped into either folder are picked up on the next rescan and
 appended to the running playlist without interrupting playback. A file is
 ignored until it has stopped changing for a minute so a copy in progress is
 never queued half-written.
+
+Touch (see touch.py): a tap on the screen changes channel, a long press is
+reserved for the menu. Until the channel controller exists, "change channel"
+means skip to the next episode in the playlist, and a long press just logs.
 """
 import os
+import queue
 import random
 import time
 from urllib.parse import unquote
 
 import vlc
+
+import touch
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 VIDEO_DIRS = [
@@ -49,6 +56,7 @@ VLC_ARGS = [
 
 RESCAN_SECONDS = 30      # how often to look for new files
 STATS_SECONDS = 600      # how often to log decoder/display counters
+CHANNEL_HOLDOFF = 1.0    # ignore taps this soon after a channel change (accidental double taps)
 
 
 def log(msg):
@@ -107,10 +115,27 @@ def main():
     log('Starting playlist of %d videos' % len(videos))
     list_player.play()
 
+    gestures = touch.TouchInput(log=log).start().events
+
     last_rescan = last_stats = time.monotonic()
+    last_change = 0.0
     while True:
-        time.sleep(5)
+        # Wake up for a gesture, or once a second for the housekeeping below.
+        try:
+            gesture = gestures.get(timeout=1.0)
+        except queue.Empty:
+            gesture = None
         now = time.monotonic()
+
+        if gesture == touch.TAP:
+            if now - last_change >= CHANNEL_HOLDOFF:
+                last_change = now
+                log('Tap: next episode')
+                list_player.next()
+            else:
+                log('Tap ignored (holdoff)')
+        elif gesture == touch.LONG_PRESS:
+            log('Long press: menu (not built yet)')
 
         if now - last_rescan >= RESCAN_SECONDS:
             last_rescan = now

@@ -1,0 +1,44 @@
+/dts-v1/;
+/plugin/;
+
+// Touch panel of the Waveshare 2.8in DPI LCD: a Goodix GT911 on a bit-banged
+// I2C bus (the hardware I2C pins are taken by the DPI bus).
+//   header pin 19 = GPIO 10 = TP_SDA
+//   header pin 23 = GPIO 11 = TP_SCL
+//   header pin 13 = GPIO 27 = TP_INT
+// Derived from Waveshare's waveshare-touch-28dpi.dtbo, minus the gpio-backlight
+// node it also carries: GPIO 18 is driven directly by buttons.py.
+// The controller sits at 0x5d (confirmed with i2cdetect 2026-09-13).
+// Panel is 480x640 native. The axis flags below are only what Waveshare ships;
+// the menu code calibrates against the mounted orientation itself.
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			i2c_touch: i2c-touch {
+				compatible = "i2c-gpio";
+				// flag 6 = GPIO_OPEN_DRAIN | GPIO_SINGLE_ENDED, what i2c-gpio wants
+				gpios = <&gpio 10 6 &gpio 11 6>;
+				i2c-gpio,delay-us = <4>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "okay";
+
+				gt911@5d {
+					compatible = "goodix,gt911";
+					reg = <0x5d>;
+					interrupt-parent = <&gpio>;
+					interrupts = <27 2>;
+					irq-gpios = <&gpio 27 0>;
+					touchscreen-size-x = <480>;
+					touchscreen-size-y = <640>;
+					touchscreen-swapped-x-y;
+					touchscreen-inverted-y;
+				};
+			};
+		};
+	};
+};

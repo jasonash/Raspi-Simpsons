@@ -19,10 +19,14 @@ BOOT=/boot/firmware
 echo "==> 1. Packages (VLC with the Raspberry Pi DRM output, no desktop bits)"
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-    vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio git exfatprogs
+    vlc-bin vlc-plugin-base vlc-plugin-video-output python3-vlc python3-rpi-lgpio python3-evdev \
+    device-tree-compiler evtest i2c-tools git exfatprogs
 
-echo "==> 2. Waveshare KMS panel overlay"
+echo "==> 2. Waveshare KMS panel overlay, and our overlay for its touch controller"
 install -m 644 "$HERE/overlays/vc4-kms-dpi-2inch8.dtbo" "$BOOT/overlays/"
+# Touch: GT911 on bit-banged I2C (GPIO 10/11, interrupt 27). Compiled from source here so
+# the source in git stays the one truth; see the comments in the .dts.
+dtc -@ -q -I dts -O dtb -o "$BOOT/overlays/simpsonstv-touch.dtbo" "$HERE/overlays/simpsonstv-touch.dts"
 
 echo "==> 3. config.txt: replace legacy Buster display lines with the KMS overlay + PWM audio"
 cp -n "$BOOT/config.txt" "$BOOT/config.txt.bak-simpsonstv" || true
@@ -34,7 +38,8 @@ s = open(p).read()
 drop = re.compile(r'^(gpio=\d+-\d+=a2|dtoverlay=dpi24|enable_dpi_lcd=|display_default_lcd=|'
                   r'extra_transpose_buffer=|dpi_group=|dpi_mode=|dpi_output_format=|hdmi_timings=|'
                   r'dtoverlay=waveshare-28dpi|dtoverlay=vc4-kms-dpi-2inch8|display_rotate=|'
-                  r'dtoverlay=audremap|# --- Simpsons TV|# Panel top edge|# PWM audio on GPIO 19)')
+                  r'dtoverlay=audremap|dtoverlay=simpsonstv-touch|dtoverlay=waveshare-touch-28dpi|'
+                  r'# --- Simpsons TV|# Panel top edge|# PWM audio on GPIO 19|# Touch controller)')
 lines = [l for l in s.splitlines() if not drop.match(l.strip())]
 s = "\n".join(lines).rstrip("\n") + "\n"
 block = """
@@ -43,6 +48,8 @@ block = """
 dtoverlay=vc4-kms-dpi-2inch8,rotate=90
 # PWM audio on GPIO 19 (GPIO 18 is the backlight, driven as plain GPIO by buttons.py)
 dtoverlay=audremap,enable_jack,pins_18_19
+# Touch controller (GT911 on GPIO 10/11/27), read by touch.py
+dtoverlay=simpsonstv-touch
 """
 if "\n[all]\n" in s:
     head, _, tail = s.rpartition("\n[all]\n")
@@ -70,7 +77,9 @@ install -m 644 "$HERE/asound.conf" /etc/asound.conf
 
 echo "==> 6. Scripts in $TV_DIR"
 install -d -o "$TV_USER" -g "$TV_USER" "$TV_DIR" "$TV_DIR/videos"
-install -m 755 -o "$TV_USER" -g "$TV_USER" "$HERE/player.py" "$HERE/buttons.py" "$HERE/encode.py" "$TV_DIR/"
+install -m 755 -o "$TV_USER" -g "$TV_USER" "$HERE/player.py" "$HERE/touch.py" "$HERE/buttons.py" "$HERE/encode.py" "$TV_DIR/"
+# player.py reads the touch panel through /dev/input (group input)
+usermod -aG input "$TV_USER"
 
 echo "==> 7. systemd services"
 for svc in tvplayer tvbutton; do
