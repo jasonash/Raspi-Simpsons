@@ -109,5 +109,13 @@ ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="SIMPSONSTV", ENV{SYSTEMD_W
 EOF
 udevadm control --reload
 
+echo "==> 11. Persistent journal"
+# Raspberry Pi OS ships journald with Storage=volatile (40-rpi-volatile-storage.conf), so
+# every log is gone after a reboot. This build has no keyboard: when the WiFi drops the only
+# way back in is a power cycle, and the evidence of what happened must survive it.
+install -d /etc/systemd/journald.conf.d
+printf '[Journal]\nStorage=persistent\nSystemMaxUse=64M\n' > /etc/systemd/journald.conf.d/simpsonstv.conf
+systemctl restart systemd-journald
+
 echo
 echo "Done. Put encoded episodes in videos/ on the SIMPSONSTV drive (or $TV_DIR/videos) and reboot:  sudo reboot"

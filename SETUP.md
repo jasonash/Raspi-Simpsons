@@ -78,6 +78,9 @@ can also be done by hand.
    it, plus a udev rule (`/etc/udev/rules.d/99-simpsonstv-usb.rules`, `SYSTEMD_WANTS`) so the
    mount also happens when the drive is plugged in after boot; the fstab line alone did not
    do that. Episodes go in `videos/` on the drive.
+11. **Persistent journal**: a journald drop-in (`/etc/systemd/journald.conf.d/simpsonstv.conf`,
+   `Storage=persistent`, capped at 64 MB) overrides the Raspberry Pi OS default of a volatile
+   journal, so `journalctl -b -1` still works after the power cycle that a WiFi drop forces.
 
 ## Episodes on a USB thumb drive
 
