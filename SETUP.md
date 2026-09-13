@@ -216,12 +216,13 @@ A long press or 20 s without a touch also closes it. Look and volume are saved i
 missing or `/dev/fb0` cannot be opened, the player logs it once and a long press does
 nothing.
 
-Touch coordinates: with the overlay's axis flags the GT911 reports X 0-639 and Y 0-479,
-which is the viewer's landscape frame when the controller's origin sits at the panel's native
-top-left corner. `SWAP_XY`, `FLIP_X` and `FLIP_Y` in `touch.py` correct it if it does not.
-To check: `sudo systemctl stop tvplayer`, then `python3 ~/simpsonstv/menu.py` draws the menu
-and, for every tap, prints the raw and screen coordinates and draws a red ring where the tap
-landed. Touch a corner: a ring at the opposite end of an axis means that axis is flipped.
+Touch coordinates: with the overlay's axis flags the GT911 reports X 0-639 and Y 0-479, but
+in the enclosure X grows down the screen and Y grows right to left (four-corner check by
+finger, 2026-09-13: top-left raw (59, 475), top-right (77, 55), bottom-left (639, 467),
+bottom-right (639, 45)). `SWAP_XY = True` and `FLIP_X = True` in `touch.py` turn that into
+screen pixels. To re-check after a hardware change: `sudo systemctl stop tvplayer`, then
+`python3 ~/simpsonstv/menu.py` draws the menu and, for every tap, prints the raw and screen
+coordinates and draws a red ring where the tap landed.
 
 `buttons.py` polls the switch on GPIO 26 (pulled up). On: GPIO 18 high (backlight) and GPIO 19
 to ALT5 (PWM audio). Off: GPIO 18 low and GPIO 19 to input (mute). Video keeps running behind

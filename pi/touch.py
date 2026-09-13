@@ -16,10 +16,11 @@ runs in a background thread and hands finished gestures to a queue; the player
 never blocks on touch and keeps working if the panel has no touch at all.
 
 Coordinates. The overlay carries Waveshare's axis flags, so the controller
-reports X 0-639 and Y 0-479: already the landscape frame the viewer sees, with
-the origin top left, IF the controller's own origin sits at the panel's native
-top-left corner. SWAP_XY / FLIP_X / FLIP_Y below correct it if it does not;
-check with `python3 menu.py` (draws the menu and a dot where each tap lands).
+reports X 0-639 and Y 0-479, but in the enclosure X grows DOWN the screen and
+Y grows from RIGHT to LEFT (calibrated by finger 2026-09-13: top-left corner
+= raw (59, 475), top-right = (77, 55), bottom-left = (639, 467), bottom-right
+= (639, 45)). SWAP_XY / FLIP_X below turn that into screen pixels; check with
+`python3 menu.py` (draws the menu and a ring where each tap lands).
 
 Run this file directly to print gestures for tuning the thresholds:
     python3 touch.py          # gestures with screen coordinates
@@ -45,10 +46,11 @@ LONG_PRESS_S = 0.80      # finger still down after this long = long press
 MOVE_PX = 30             # more movement than this (in raw touch units) cancels either
 RETRY_S = 5.0            # how often to look for the device if it is missing
 
-# Raw controller axes -> screen (640x480 landscape as mounted, origin top left).
+# Raw controller axes -> screen (640x480 landscape as mounted, origin top left):
+# screen x = 479 - raw Y (scaled to 640), screen y = raw X (scaled to 480).
 # Set after checking with `python3 menu.py`; see the module docstring.
-SWAP_XY = False
-FLIP_X = False
+SWAP_XY = True
+FLIP_X = True
 FLIP_Y = False
 SCREEN_W, SCREEN_H = 640, 480
 
