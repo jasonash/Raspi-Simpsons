@@ -99,14 +99,13 @@ SCANLINE_PERIOD = 3
 SCANLINE_ALPHA = 90      # 0-255, how dark the stripe is
 SCANLINES_PNG = '.scanlines.png'
 
-# Draft channel line-up written next to a --out library (the drive's root channels.json).
-# "match" strings are substrings of the file name, so season codes must be two digits.
-CHANNELS = {"channels": [
-    {"name": "1"},
-    {"name": "2", "match": ['S%02d' % n for n in range(1, 10)]},
-    {"name": "3", "match": ['S%02d' % n for n in range(10, 20)]},
-    {"name": "4", "match": ['S%02d' % n for n in range(20, 40)]},
-]}
+# Channel line-up written next to a --out library (the drive's root channels.json): the
+# channel number is the season number, and one more channel after the last season carries
+# everything. "match" strings are substrings of the file name, so season codes must be two
+# digits.
+SEASONS = 37
+CHANNELS = {"channels": [{"name": str(n), "match": ['S%02d' % n]} for n in range(1, SEASONS + 1)]
+                        + [{"name": str(SEASONS + 1)}]}
 
 STATIC_SECONDS = 1.0
 STATIC_GRAIN = '320x240'     # noise is generated at this size and doubled: chunkier snow, smaller file

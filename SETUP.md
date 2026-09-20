@@ -143,8 +143,8 @@ every change.
 
 ### Static clips
 
-`python3 pi/encode.py --static 9` on the Mac writes `pi/static/static.mp4` (plain snow with
-hiss, 480x640, 24 fps, one second) and `ch1.mp4` to `ch9.mp4`, the same with a big green
+`python3 pi/encode.py --static 38` on the Mac writes `pi/static/static.mp4` (plain snow with
+hiss, 480x640, 24 fps, one second) and `ch1.mp4` to `ch38.mp4`, the same with a big green
 block-font channel number top right, drawn with ffmpeg's `drawbox` because Homebrew's ffmpeg
 has no `drawtext`. Copy the `static/` folder to the root of the SIMPSONSTV drive (the player
 also looks in `~/simpsonstv/static/`). The clips are not in git: a second of noise is close to
@@ -275,9 +275,12 @@ just means some episodes stay clean under VINTAGE.
 
 walks every season folder under the source and writes the drive layout directly:
 `SimpsonsTV/videos/*.mp4`, `SimpsonsTV/videos/fuzzy/*.mp4`, the `static/` clips from
-`pi/static/` and a draft `channels.json` (1 = everything, 2 = seasons 1 to 9, 3 = 10 to 19,
-4 = 20 onward; edit to taste). Episodes that already exist in a season's old `encoded/`
-folder are copied in rather than re-encoded. `-j 3` encodes three episodes at once with the
+`pi/static/` and a `channels.json` with one channel per season (channel 4 is season 4, up
+to `SEASONS` in `encode.py`) plus one more after the last season that carries everything
+(channel 38 for 37 seasons; edit to taste). Generate the static clips for that many channels
+first (`--static 38`), or the higher channels change with plain snow and no number.
+Episodes that already exist in a season's old `encoded/` folder are copied in rather than
+re-encoded. `-j 3` encodes three episodes at once with the
 Mac's hardware HEVC decoder doing the source decode; on an M4 Pro that is about 65 s per
 episode against 93 s one at a time, so 797 episodes take about 14 hours. The terminal and
 `SimpsonsTV/encode.log` get a line per finished episode with elapsed time and an ETA, and a
