@@ -90,6 +90,12 @@ class Framebuffer:
         with open(self.device, 'r+b') as f:
             f.write(data)
 
+    def clear(self):
+        """Back to black. The panel shows this buffer whenever VLC is stopped (the gap
+        before the power-on clip, a service restart), so a menu must not be left in it."""
+        with open(self.device, 'r+b') as f:
+            f.write(b'\0' * (self.stride * self.height))
+
 
 def rgb565(img):
     """Little-endian RGB565 bytes of an RGB image."""

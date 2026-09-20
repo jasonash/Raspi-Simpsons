@@ -326,6 +326,7 @@ def main():
     else:
         try:
             screen = menu.Framebuffer()
+            screen.clear()       # a menu from before a restart may still be in it
         except (OSError, RuntimeError) as e:
             log('Menu: no usable framebuffer (%s), long press will do nothing' % e)
 
@@ -384,6 +385,7 @@ def main():
         nonlocal ui
         log('Menu: closed (%s)' % why)
         chosen, ui = ui.channel, None
+        screen.clear()           # or the menu shows again whenever VLC next lets go
         tv.close_menu(chosen)
 
     last_rescan = last_stats = time.monotonic()
@@ -404,6 +406,8 @@ def main():
             log('Power: off')
             ui = None                # an open menu just goes away
             tv.power_off()
+            if screen is not None:
+                screen.clear()
         elif event == 'power_on':
             log('Power: on')
             tv.power_on()

@@ -211,7 +211,9 @@ Five rows, each one finger high:
 | SHUT DOWN | twice | the row turns red and asks for a second tap, then `sudo systemctl poweroff` with SHUTTING DOWN on the panel |
 | DONE | anywhere | closes the menu |
 
-A long press or 20 s without a touch also closes it. Look and volume are saved in
+A long press or 20 s without a touch also closes it. Closing blanks the framebuffer again
+(so does the power knob's off): the panel shows that buffer whenever VLC is stopped, and a
+menu left in it would flash up before the power-on clip. Look and volume are saved in
 `~/simpsonstv/settings.json` (defaults: volume 100, clean) and restored at boot. If Pillow is
 missing or `/dev/fb0` cannot be opened, the player logs it once and a long press does
 nothing.
