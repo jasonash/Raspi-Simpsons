@@ -84,6 +84,8 @@ TAP_HOLDOFF = 0.4        # ignore taps this soon after the last one (double taps
 WATCHDOG_SECONDS = 5     # VLC sitting in Ended/Error this long without telling us = restart
 MENU_TIMEOUT = 20        # close the menu after this long without a touch
 POWER_POLL = 0.2         # how often to look at the power knob's state file
+FADE_SECONDS = 0.25      # the sound fades over this long when the knob goes to off
+FADE_STEPS = 10
 
 
 def log(msg):
@@ -253,7 +255,14 @@ class TV:
     def power_off(self):
         """The knob went to off: stop decoding. The channel clocks carry on by themselves."""
         self.state = self.OFF
+        # The knob no longer mutes the amplifier (that popped), so go quiet gently here.
+        level = self.player.audio_get_volume()
+        if level > 0:
+            for step in range(FADE_STEPS - 1, -1, -1):
+                self.player.audio_set_volume(level * step // FADE_STEPS)
+                time.sleep(FADE_SECONDS / FADE_STEPS)
         self.player.stop()
+        self.volume_pending = self.volume is not None      # the faded gain sticks: set it again
 
     def power_on(self):
         """Boot or the knob going to on: the power-on clip if there is one, then television."""
@@ -381,8 +390,10 @@ def main():
     last_tap = 0.0
     while True:
         # Wake up for a gesture or a player event, or once a second for housekeeping.
+        # While a volume change is waiting for VLC's audio output, look again quickly, or the
+        # first second of an item (the power-on clip) plays at the wrong level.
         try:
-            event = events.get(timeout=1.0)
+            event = events.get(timeout=0.05 if tv.volume_pending else 1.0)
         except queue.Empty:
             event = None
         now = time.monotonic()

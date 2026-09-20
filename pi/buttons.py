@@ -3,12 +3,15 @@
 
 GPIO 26: power switch input (pulled up; switch closes to ground).
 GPIO 18: LCD backlight enable (high = on).
-GPIO 19: PWM audio to the amplifier. Set to ALT5 (PWM1) for sound, or to a
-         plain input to mute when the TV is "off".
+GPIO 19: PWM audio to the amplifier (ALT5 = PWM1). Set once at start and then
+         left alone: switching the pin between PWM and a plain input to mute, as
+         the original design did, steps the DC level at the amplifier's input
+         and the speaker pops loudly, both ways.
 
-The Pi keeps running either way: "off" is a dark, silent panel. The state is
-also written to /run/simpsonstv/power ("on" or "off") so player.py can stop
-playback while the TV is off and play the power-on clip when it comes back.
+The Pi keeps running either way: "off" is a dark, silent panel. The silence
+comes from player.py: the state is written to /run/simpsonstv/power ("on" or
+"off"), and the player fades out and stops while the TV is off, then plays the
+power-on clip when it comes back.
 
 Raspberry Pi OS Bookworm/Trixie replaced raspi-gpio with pinctrl and
 RPi.GPIO with the rpi-lgpio compatibility layer; this script uses both.
@@ -47,12 +50,10 @@ def publish(screen_on):
 
 
 def turn_on_screen():
-    pinctrl(str(PIN_AUDIO), 'a5')          # PWM1 -> audio out
     GPIO.output(PIN_BACKLIGHT, GPIO.HIGH)
 
 
 def turn_off_screen():
-    pinctrl(str(PIN_AUDIO), 'ip')          # mute
     GPIO.output(PIN_BACKLIGHT, GPIO.LOW)
 
 
@@ -61,6 +62,7 @@ def main():
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(PIN_SWITCH, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     GPIO.setup(PIN_BACKLIGHT, GPIO.OUT)
+    pinctrl(str(PIN_AUDIO), 'a5')          # PWM1 -> audio out (the audremap overlay's setting)
 
     screen_on = None
     last = None

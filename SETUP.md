@@ -229,13 +229,16 @@ coordinates and draws a red ring where the tap landed.
 The latching switch is a pretend power switch, as in the original design: it connects GPIO 26
 (header pin 37) to ground (pin 39, next to it) and the Pi stays up either way. `buttons.py`
 polls it ten times a second (pulled up, two matching readings to ride out contact bounce).
-On: GPIO 18 high (backlight) and GPIO 19 to ALT5 (PWM audio). Off: GPIO 18 low and GPIO 19 to
-input (mute). With nothing wired the pin reads high, which is "on". Flip `INVERT_SWITCH` if
-the knob is backwards. The real off is SHUT DOWN in the menu; do not put a switch in the 5 V
-line, pulling power from a running Pi is how SD cards get corrupted.
+On: GPIO 18 high (backlight). Off: GPIO 18 low. GPIO 19 stays on ALT5 (PWM audio) the whole
+time: the original design muted by switching it to a plain input, and that steps the DC level
+at the amplifier's input, a loud pop from the speaker in both directions. With nothing wired
+the pin reads high, which is "on". Flip `INVERT_SWITCH` if the knob is backwards. The real
+off is SHUT DOWN in the menu; do not put a switch in the 5 V line, pulling power from a
+running Pi is how SD cards get corrupted.
 
 `buttons.py` also writes the state, `on` or `off`, to `/run/simpsonstv/power`, and the player
-watches that file. Off stops VLC, so nothing is decoded behind the dark panel; the channel
+watches that file. Off fades the sound out over a quarter of a second and stops VLC, which
+is where the silence comes from, so nothing is decoded behind the dark panel; the channel
 clocks run on regardless, so the programme has moved on when the TV comes back, like a real
 one. On, and every boot, plays `static/poweron.mp4` (on the drive or in `~/simpsonstv/static/`)
 if it exists, then the channel. A tap during the clip skips it. Without the file the TV goes
