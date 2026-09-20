@@ -224,9 +224,23 @@ screen pixels. To re-check after a hardware change: `sudo systemctl stop tvplaye
 `python3 ~/simpsonstv/menu.py` draws the menu and, for every tap, prints the raw and screen
 coordinates and draws a red ring where the tap landed.
 
-`buttons.py` polls the switch on GPIO 26 (pulled up). On: GPIO 18 high (backlight) and GPIO 19
-to ALT5 (PWM audio). Off: GPIO 18 low and GPIO 19 to input (mute). Video keeps running behind
-a dark screen, same as the original design. Flip `INVERT_SWITCH` if the knob is backwards.
+## Power knob
+
+The latching switch is a pretend power switch, as in the original design: it connects GPIO 26
+(header pin 37) to ground (pin 39, next to it) and the Pi stays up either way. `buttons.py`
+polls it ten times a second (pulled up, two matching readings to ride out contact bounce).
+On: GPIO 18 high (backlight) and GPIO 19 to ALT5 (PWM audio). Off: GPIO 18 low and GPIO 19 to
+input (mute). With nothing wired the pin reads high, which is "on". Flip `INVERT_SWITCH` if
+the knob is backwards. The real off is SHUT DOWN in the menu; do not put a switch in the 5 V
+line, pulling power from a running Pi is how SD cards get corrupted.
+
+`buttons.py` also writes the state, `on` or `off`, to `/run/simpsonstv/power`, and the player
+watches that file. Off stops VLC, so nothing is decoded behind the dark panel; the channel
+clocks run on regardless, so the programme has moved on when the TV comes back, like a real
+one. On, and every boot, plays `static/poweron.mp4` (on the drive or in `~/simpsonstv/static/`)
+if it exists, then the channel. A tap during the clip skips it. Without the file the TV goes
+straight to the channel, and without `buttons.py` running the player assumes "on". Encode the
+clip like an episode (480x640, rotated, 24 fps, mono AAC) and keep it to a few seconds.
 
 ## Encoding episodes (on the Mac)
 

@@ -13,6 +13,12 @@ VLC takes the panel back when the menu closes. Channel, look (clean or the
 vintage encode from encode.py --fuzzy), volume and a clean shutdown live there;
 look and volume persist in settings.json next to this script.
 
+The power knob (buttons.py) only darkens the panel and mutes the amp, but it
+also tells this player: while the TV is "off" VLC is stopped (nothing is
+decoded, and the panel shows the black console behind the dark backlight), and
+when it comes back "on", and at boot, static/poweron.mp4 plays first if there
+is one, then the channel at wherever its clock has got to.
+
 Everything plays inside ONE long-lived VLC media player driven through libvlc
 (python3-vlc). The process never exits and the player object is reused for
 every file, so VLC keeps hold of the display and the text console never gets
@@ -32,6 +38,7 @@ import json
 import os
 import queue
 import subprocess
+import threading
 import time
 from urllib.parse import unquote
 
@@ -54,6 +61,8 @@ SETTINGS_PATH = os.path.join(HERE, 'settings.json')
 LOOKS = ('clean', 'vintage')
 DEFAULT_SETTINGS = {'volume': 100, 'look': LOOKS[0]}
 VINTAGE_DIR = 'fuzzy'     # videos/fuzzy/<name>.mp4 is the vintage version of videos/<name>.mp4
+POWER_PATH = '/run/simpsonstv/power'             # "on" or "off", written by buttons.py
+POWER_CLIP = 'poweron.mp4'                       # in static/, played at boot and at every switch-on
 
 VLC_ARGS = [
     '--quiet',
@@ -74,6 +83,7 @@ STATS_SECONDS = 600      # how often to log decoder/display counters
 TAP_HOLDOFF = 0.4        # ignore taps this soon after the last one (double taps, bounces)
 WATCHDOG_SECONDS = 5     # VLC sitting in Ended/Error this long without telling us = restart
 MENU_TIMEOUT = 20        # close the menu after this long without a touch
+POWER_POLL = 0.2         # how often to look at the power knob's state file
 
 
 def log(msg):
@@ -109,20 +119,44 @@ def save_settings(s):
         log('Cannot save %s: %s' % (SETTINGS_PATH, e))
 
 
-def static_clip(channel_name):
-    """Path of the static clip to show when tuning to this channel, or None."""
+def find_clip(*names):
+    """Path of the first of `names` found in a static/ folder, or None."""
     for d in STATIC_DIRS:
-        for name in ('ch%s.mp4' % channel_name, 'static.mp4'):
+        for name in names:
             p = os.path.join(d, name)
             if os.path.isfile(p):
                 return p
     return None
 
 
+def static_clip(channel_name):
+    """Path of the static clip to show when tuning to this channel, or None."""
+    return find_clip('ch%s.mp4' % channel_name, 'static.mp4')
+
+
+def power_is_on():
+    """What the power knob says. No state file (no buttons.py, no knob) means on."""
+    try:
+        with open(POWER_PATH) as f:
+            return f.read().strip() != 'off'
+    except OSError:
+        return True
+
+
+def watch_power(events, state):
+    """Thread: post 'power_on' / 'power_off' whenever the knob's state file changes."""
+    while True:
+        time.sleep(POWER_POLL)
+        on = power_is_on()
+        if on != state:
+            state = on
+            events.put('power_on' if on else 'power_off')
+
+
 class TV:
     """One VLC media player showing whichever channel is selected."""
 
-    STATIC, EPISODE, IDLE, MENU = 'static', 'episode', 'idle', 'menu'
+    STATIC, EPISODE, IDLE, MENU, INTRO, OFF = 'static', 'episode', 'idle', 'menu', 'intro', 'off'
 
     def __init__(self, instance, chans, events, look='clean'):
         self.instance = instance
@@ -216,10 +250,24 @@ class TV:
         else:
             self.show(self.current)
 
+    def power_off(self):
+        """The knob went to off: stop decoding. The channel clocks carry on by themselves."""
+        self.state = self.OFF
+        self.player.stop()
+
+    def power_on(self):
+        """Boot or the knob going to on: the power-on clip if there is one, then television."""
+        clip = find_clip(POWER_CLIP)
+        if clip:
+            self.state = self.INTRO
+            self._play(clip)
+        else:
+            self.show(self.target)
+
     def on_ended(self):
-        if self.state == self.MENU:
+        if self.state in (self.MENU, self.OFF):
             return
-        if self.state == self.STATIC:
+        if self.state in (self.STATIC, self.INTRO):
             self.show(self.target)
         elif self.state == self.EPISODE:
             ch = self.channels[self.current]
@@ -235,7 +283,7 @@ class TV:
 
     def check(self):
         """Watchdog for a lost end-of-item event or a stuck player."""
-        if self.state in (self.IDLE, self.MENU):
+        if self.state in (self.IDLE, self.MENU, self.OFF):
             return
         if time.monotonic() - self.started_at < WATCHDOG_SECONDS:
             return
@@ -304,7 +352,13 @@ def main():
 
     touch.TouchInput(log=log, events=events).start()
     tv.set_volume(settings['volume'])
-    tv.show(0)
+    powered = power_is_on()
+    threading.Thread(target=watch_power, args=(events, powered), daemon=True).start()
+    if powered:
+        tv.power_on()
+    else:
+        log('Power: off, waiting for the knob')
+        tv.power_off()
 
     ui = None                # the open menu.Menu, or None while watching TV
     menu_touched = 0.0       # monotonic time of the last touch while the menu was open
@@ -335,6 +389,15 @@ def main():
 
         if event == 'ended':
             tv.on_ended()
+        elif event == 'power_off':
+            log('Power: off')
+            ui = None                # an open menu just goes away
+            tv.power_off()
+        elif event == 'power_on':
+            log('Power: on')
+            tv.power_on()
+        elif isinstance(event, tuple) and tv.state == tv.OFF:
+            pass                     # the dark screen ignores fingers
         elif isinstance(event, tuple):
             kind, x, y = event
             if ui is not None:
