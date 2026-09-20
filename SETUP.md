@@ -244,7 +244,10 @@ is where the silence comes from, so nothing is decoded behind the dark panel; th
 clocks run on regardless, so the programme has moved on when the TV comes back, like a real
 one. On, and every boot, plays `static/poweron.mp4` (on the drive or in `~/simpsonstv/static/`)
 if it exists, then the channel. A tap during the clip skips it. Without the file the TV goes
-straight to the channel, and without `buttons.py` running the player assumes "on". Encode the
+straight to the channel, and without `buttons.py` running the player assumes "on". So that
+a boot with the knob off stays dark and silent, `tvbutton.service` is ordered before
+`tvplayer.service` (the guide's `After=multi-user.target` held it back until the network was
+up, 18 s after the player), and the player waits up to 5 s for the state file at start. Encode the
 clip like an episode (480x640, rotated, 24 fps, mono AAC) and keep it to a few seconds.
 
 ## Encoding episodes (on the Mac)

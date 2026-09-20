@@ -84,6 +84,7 @@ TAP_HOLDOFF = 0.4        # ignore taps this soon after the last one (double taps
 WATCHDOG_SECONDS = 5     # VLC sitting in Ended/Error this long without telling us = restart
 MENU_TIMEOUT = 20        # close the menu after this long without a touch
 POWER_POLL = 0.2         # how often to look at the power knob's state file
+POWER_WAIT = 5.0         # at start, how long to wait for that file before assuming "on"
 FADE_SECONDS = 0.25      # the sound fades over this long when the knob goes to off
 FADE_STEPS = 10
 
@@ -362,6 +363,11 @@ def main():
 
     touch.TouchInput(log=log, events=events).start()
     tv.set_volume(settings['volume'])
+    # buttons.py is started just before this service; give it a moment to say where the
+    # knob is, or a boot with the TV "off" starts with the power-on clip anyway.
+    deadline = time.monotonic() + POWER_WAIT
+    while not os.path.exists(POWER_PATH) and time.monotonic() < deadline:
+        time.sleep(0.1)
     powered = power_is_on()
     threading.Thread(target=watch_power, args=(events, powered), daemon=True).start()
     if powered:

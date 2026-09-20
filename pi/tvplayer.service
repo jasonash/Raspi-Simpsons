@@ -1,7 +1,7 @@
 [Unit]
 Description=Simpsons TV video player
-After=sound.target
-Wants=sound.target
+After=sound.target tvbutton.service
+Wants=sound.target tvbutton.service
 
 [Service]
 # VLC refuses to run as root; the user is in the video, render and audio groups.

@@ -1,6 +1,8 @@
 [Unit]
 Description=Simpsons TV power knob
-After=multi-user.target
+# Early, and before the player: it has to know at its first frame whether the TV is "on".
+# (The guide's After=multi-user.target held this back until the network was up, ~30 s.)
+Before=tvplayer.service
 
 [Service]
 WorkingDirectory=/home/jason/simpsonstv
